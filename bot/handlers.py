@@ -3,6 +3,7 @@
 
 import os
 import pandas as pd
+import html
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -53,6 +54,52 @@ def calculate_balance(solicitudes):
     return total, atrasadas, proximas, al_dia
 
 
+# --- Lógica de Autorización Centralizada ---
+async def handle_unauthorized(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Función central para manejar a cualquier usuario no autorizado."""
+    user = update.effective_user
+    user_id, user_name = user.id, user.first_name
+    user_status = get_user_status(user_id)
+    admin_id = get_admin_id()
+
+    # Si el admin escribe un comando no reconocido, le damos ayuda.
+    if user_id == admin_id and user_status == "autorizado":
+        await update.message.reply_text("Comando no reconocido. Usa /help.")
+        return
+
+    # Si el usuario es completamente nuevo
+    if user_status is None:
+        logger.info(f"Usuario nuevo no autorizado: {user_name} ({user.id}).")
+        add_pending_user(user_id, user_name)
+        await update.message.reply_text(
+            "Tu solicitud de acceso está siendo validada por el administrador. Por favor, espera."
+        )
+        if admin_id:
+            try:
+                user_name_safe = html.escape(user_name)
+                text_to_admin = (
+                    f"<b>⚠️ Nueva Solicitud de Acceso ⚠️</b>\n\n"
+                    f"El usuario <b>{user_name_safe}</b> (ID: <code>{user_id}</code>) quiere usar el bot.\n\n"
+                    f"Para autorizarlo, usa el comando:\n<code>/autorizar {user_id} [rol]</code>\n\n"
+                    f"Roles disponibles: <code>notificado</code>, <code>contrataciones</code>."
+                )
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=text_to_admin,
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception as e:
+                logger.error(f"No se pudo notificar al admin {admin_id}: {e}")
+
+    # Si el usuario ya está registrado pero pendiente
+    elif user_status == "pendiente":
+        await update.message.reply_text(
+            "Tu solicitud de acceso todavía está pendiente."
+        )
+
+
 # --- Handlers de Comandos ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -72,17 +119,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"¡Hola, {user.first_name}! Has sido configurado como administrador."
         )
     else:
-        await update.message.reply_text(
-            "¡Bienvenido al Bot de Alertas de Contratación!"
-        )
+        # Si el usuario no es el admin y no está autorizado, se maneja aquí
+        if get_user_status(user.id) != "autorizado":
+            await handle_unauthorized(update, context)
+        else:
+            await update.message.reply_text(
+                "¡Bienvenido al Bot de Alertas de Contratación!"
+            )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # CORRECCIÓN DE SEGURIDAD: Añadir verificación de autorización
     if get_user_status(update.effective_user.id) != "autorizado":
-        await update.message.reply_text(
-            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
-        )
+        await handle_unauthorized(update, context)
         return
 
     help_text = (
@@ -107,47 +155,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 
 
-async def handle_unauthorized(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    user = update.effective_user
-    user_id, user_name = user.id, user.first_name
-    user_status = get_user_status(user_id)
-    admin_id = get_admin_id()
-    if user_id == admin_id and user_status == "autorizado":
-        await update.message.reply_text("Comando no reconocido. Usa /help.")
-        return
-    if user_status is None:
-        logger.info(f"Usuario nuevo no autorizado: {user_name} ({user.id}).")
-        add_pending_user(user_id, user_name)
-        await update.message.reply_text(
-            "Tu solicitud de acceso está siendo validada por el administrador. Por favor, espera."
-        )
-        if admin_id:
-            try:
-                text_to_admin = (
-                    f"⚠️ **Nueva Solicitud de Acceso** ⚠️\n\n"
-                    f"El usuario **{user_name}** (ID: `{user_id}`) quiere usar el bot.\n\n"
-                    f"Para autorizarlo, usa el comando `/autorizar {user_id} [rol]`.\n"
-                    f"Roles disponibles: `notificado`, `contrataciones`."
-                )
-                await context.bot.send_message(
-                    chat_id=admin_id,
-                    text=text_to_admin,
-                    parse_mode=ParseMode.MARKDOWN_V2,
-                )
-            except Exception as e:
-                logger.error(f"No se pudo notificar al admin {admin_id}: {e}")
-    elif user_status == "pendiente":
-        await update.message.reply_text(
-            "Tu solicitud de acceso todavía está pendiente."
-        )
-
-
 async def cargar_excel_local(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    if update.effective_user.id != get_admin_id():
+    if get_user_role(update.effective_user.id) != "admin":
         await update.message.reply_text("No tienes permiso para ejecutar este comando.")
         return
     file_path = NOMBRE_ARCHIVO_EXCEL
@@ -248,8 +259,8 @@ async def cargar_excel_local(
 async def configurar_dias_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    if update.effective_user.id != get_admin_id():
-        await update.message.reply_text("No tienes permiso para usar este comando.")
+    if get_user_role(update.effective_user.id) != "admin":
+        await update.message.reply_text("No tienes permiso para ejecutar este comando.")
         return
     try:
         days = int(context.args[0])
@@ -266,8 +277,8 @@ async def configurar_dias_command(
 async def configurar_hora_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    if update.effective_user.id != get_admin_id():
-        await update.message.reply_text("No tienes permiso para usar este comando.")
+    if get_user_role(update.effective_user.id) != "admin":
+        await update.message.reply_text("No tienes permiso para ejecutar este comando.")
         return
     try:
         time_str = context.args[0]
@@ -293,8 +304,8 @@ async def configurar_hora_command(
 
 
 async def autorizar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id != get_admin_id():
-        await update.message.reply_text("No tienes permiso para usar este comando.")
+    if get_user_role(update.effective_user.id) != "admin":
+        await update.message.reply_text("No tienes permiso para ejecutar este comando.")
         return
     try:
         user_id_to_auth = int(context.args[0])
@@ -331,7 +342,7 @@ async def autorizar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def listar_usuarios_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    if update.effective_user.id != get_admin_id():
+    if get_user_role(update.effective_user.id) != "admin":
         await update.message.reply_text("No tienes permiso para ejecutar este comando.")
         return
     users = get_all_users()
@@ -352,9 +363,7 @@ async def ver_solicitud_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     if get_user_status(update.effective_user.id) != "autorizado":
-        await update.message.reply_text(
-            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
-        )
+        await handle_unauthorized(update, context)
         return
     try:
         solicitud_id = int(context.args[0])
@@ -393,7 +402,7 @@ async def ver_solicitud_command(
                 elif dias_restantes <= dias_anticipacion:
                     estatus = f"🟡 Próximo (faltan {dias_restantes} día(s))"
                 else:
-                    estatus = f"🟢 A tiempo (faltan {dias_restantes} día(s))"
+                    estatus = f"� A tiempo (faltan {dias_restantes} día(s))"
                 message += f"➡️ <b>{nombre_hito}:</b> Planificado para {fecha_plan} ({estatus})\n"
             else:
                 message += f"⚪️ <b>{nombre_hito}:</b> Pendiente para el {fecha_plan}\n"
@@ -471,9 +480,7 @@ async def completar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if get_user_status(update.effective_user.id) != "autorizado":
-        await update.message.reply_text(
-            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
-        )
+        await handle_unauthorized(update, context)
         return
     solicitudes = get_solicitudes_for_balance()
     total, atrasadas, proximas, al_dia = calculate_balance(solicitudes)
@@ -489,9 +496,7 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def hoy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if get_user_status(update.effective_user.id) != "autorizado":
-        await update.message.reply_text(
-            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
-        )
+        await handle_unauthorized(update, context)
         return
     solicitudes = get_solicitudes_for_today()
     if not solicitudes:
@@ -513,9 +518,7 @@ async def balance_filtro_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     if get_user_status(update.effective_user.id) != "autorizado":
-        await update.message.reply_text(
-            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
-        )
+        await handle_unauthorized(update, context)
         return ConversationHandler.END
     distritos = get_unique_column_values("distrito")
     if not distritos:
@@ -579,7 +582,7 @@ async def servicio_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         f"<b>Distrito:</b> {distrito_seleccionado}\n"
         f"<b>Servicio:</b> {servicio_seleccionado}\n\n"
         f"Total de Solicitudes en Proceso: <b>{total}</b>\n"
-        f"� A tiempo: <b>{al_dia}</b>\n"
+        f"🟢 A tiempo: <b>{al_dia}</b>\n"
         f"🟡 Próximas a vencer: <b>{proximas}</b>\n"
         f"🔴 Retrasadas: <b>{atrasadas}</b>"
     )
@@ -608,9 +611,7 @@ async def listar_solicitudes_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     if get_user_status(update.effective_user.id) != "autorizado":
-        await update.message.reply_text(
-            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
-        )
+        await handle_unauthorized(update, context)
         return ConversationHandler.END
     distritos = get_unique_column_values("distrito")
     if not distritos:
