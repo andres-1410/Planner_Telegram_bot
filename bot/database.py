@@ -114,32 +114,33 @@ def get_solicitud_by_id(solicitud_id):
 
 
 def get_solicitudes_for_balance(distrito=None, servicio=None):
+    """Obtiene todas las solicitudes activas con su hito actual y fecha planificada."""
     conn = db_connect()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    query = "SELECT hito_actual FROM solicitudes WHERE hito_actual IS NOT NULL"
+
+    # CORRECCIÓN: La consulta ahora une dinámicamente la fecha correcta para cada hito.
+    query_parts = []
+    for hito in HITOS_SECUENCIA:
+        query_parts.append(f"WHEN '{hito}' THEN fecha_planificada_{hito}")
+
+    case_statement = "CASE hito_actual " + " ".join(query_parts) + " END"
+
+    query = f"SELECT ({case_statement}) as fecha_planificada FROM solicitudes WHERE hito_actual IS NOT NULL"
     params = []
+
     if distrito and distrito != "TODOS":
         query += " AND distrito = ?"
         params.append(distrito)
     if servicio and servicio != "TODOS":
         query += " AND servicio = ?"
         params.append(servicio)
+
     cursor.execute(query, params)
-    rows = cursor.fetchall()
-    results = []
-    for row in rows:
-        hito_actual = row["hito_actual"]
-        fecha_plan_col = f"fecha_planificada_{hito_actual}"
-        cursor.execute(
-            f"SELECT {fecha_plan_col} FROM solicitudes WHERE hito_actual = ?",
-            (hito_actual,),
-        )
-        fecha_row = cursor.fetchone()
-        if fecha_row:
-            results.append({"fecha_planificada": fecha_row[0]})
+    results = cursor.fetchall()
     conn.close()
-    return results
+    # Convertimos las filas de la base de datos a una lista de diccionarios
+    return [dict(row) for row in results]
 
 
 def get_unique_column_values(column_name, distrito=None):
@@ -250,34 +251,24 @@ def replanificar_hito_actual(solicitud_id, nueva_fecha_str):
     return hito_actual, hitos_ajustados
 
 
-# --- NUEVA FUNCIÓN ---
 def get_solicitudes_for_today():
-    """Obtiene las solicitudes cuyo hito actual vence hoy."""
     conn = db_connect()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-
     hoy_str = datetime.now().strftime("%Y-%m-%d")
-
-    # Obtenemos todas las solicitudes activas
     cursor.execute(
         "SELECT id, solicitud_contratacion, hito_actual FROM solicitudes WHERE hito_actual IS NOT NULL"
     )
     solicitudes_activas = cursor.fetchall()
-
     solicitudes_de_hoy = []
     for solicitud in solicitudes_activas:
         hito_actual = solicitud["hito_actual"]
         fecha_plan_col = f"fecha_planificada_{hito_actual}"
-
-        # Obtenemos la fecha específica de ese hito para esa solicitud
         cursor.execute(
             f"SELECT {fecha_plan_col} FROM solicitudes WHERE id = ?", (solicitud["id"],)
         )
         fecha_plan = cursor.fetchone()[0]
-
         if fecha_plan == hoy_str:
             solicitudes_de_hoy.append(solicitud)
-
     conn.close()
     return solicitudes_de_hoy

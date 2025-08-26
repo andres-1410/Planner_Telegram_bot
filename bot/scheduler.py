@@ -2,12 +2,13 @@
 # Lógica para programar y ejecutar las notificaciones.
 
 import html
+import sqlite3  # <-- CORRECCIÓN: Se añadió la importación que faltaba.
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram.ext import Application
 from telegram.constants import ParseMode
 
-from .config import logger, TIMEZONE
+from .config import logger, TIMEZONE, HITO_NOMBRES_LARGOS
 from .database import get_config_value, get_notifiable_users, db_connect
 
 
@@ -30,28 +31,15 @@ async def check_and_send_notifications(context: Application):
         logger.info(f"Buscando eventos para la fecha: {target_date}")
 
         conn = db_connect()
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        date_columns_map = {
-            "fecha_planificada_estrategia": (
-                "Estrategia de Contratación",
-                "fecha_real_estrategia",
-            ),
-            "fecha_planificada_inicio": (
-                "Acta de Inicio - Solicitud A",
-                "fecha_real_inicio",
-            ),
-            "fecha_planificada_decision": ("Decisión de Inicio", "fecha_real_decision"),
-            "fecha_planificada_acta_otorgamiento": (
-                "Acta de Decisión de Otorgamiento",
-                "fecha_real_acta_otorgamiento",
-            ),
-            "fecha_planificada_notif_otorgamiento": (
-                "Notificación de Otorgamiento",
-                "fecha_real_notif_otorgamiento",
-            ),
-            "fecha_planificada_contrato": ("Contrato", "fecha_real_contrato"),
-        }
+        # La lógica ahora se enfoca solo en el hito_actual de cada solicitud.
+        # 1. Obtenemos todas las solicitudes que todavía están activas.
+        cursor.execute(
+            "SELECT id, solicitud_contratacion, hito_actual FROM solicitudes WHERE hito_actual IS NOT NULL"
+        )
+        solicitudes_activas = cursor.fetchall()
 
         users_to_notify = get_notifiable_users()
         if not users_to_notify:
@@ -59,18 +47,26 @@ async def check_and_send_notifications(context: Application):
             conn.close()
             return
 
-        for planned_col, (event_name, real_col) in date_columns_map.items():
-            query = f"SELECT id, solicitud_contratacion FROM solicitudes WHERE {planned_col} = ? AND {real_col} IS NULL"
-            cursor.execute(query, (target_date,))
-            events = cursor.fetchall()
+        for solicitud in solicitudes_activas:
+            hito_actual = solicitud["hito_actual"]
+            fecha_plan_col = f"fecha_planificada_{hito_actual}"
 
-            for event_id, solicitud_name in events:
+            # 2. Obtenemos la fecha específica del hito actual para esta solicitud.
+            cursor.execute(
+                f"SELECT {fecha_plan_col} FROM solicitudes WHERE id = ?",
+                (solicitud["id"],),
+            )
+            fecha_plan_result = cursor.fetchone()
+
+            if fecha_plan_result and fecha_plan_result[0] == target_date:
+                solicitud_id = solicitud["id"]
+                solicitud_name = solicitud["solicitud_contratacion"]
+                event_name = HITO_NOMBRES_LARGOS.get(hito_actual, hito_actual)
+
                 logger.info(
                     f"¡Evento encontrado! Solicitud: '{solicitud_name}', Evento: '{event_name}'"
                 )
 
-                # CORRECCIÓN DEFINITIVA: Usar HTML para el formato del mensaje.
-                # html.escape() previene errores con caracteres como <, > y &.
                 solicitud_name_safe = html.escape(solicitud_name)
                 event_name_safe = html.escape(event_name)
 
@@ -82,12 +78,11 @@ async def check_and_send_notifications(context: Application):
                 )
                 for user_id in users_to_notify:
                     try:
-                        # Usamos ParseMode.HTML que es más robusto
                         await context.bot.send_message(
                             chat_id=user_id, text=message, parse_mode=ParseMode.HTML
                         )
                         logger.info(
-                            f"Notificación enviada a {user_id} para el evento '{event_name}' de la solicitud ID {event_id}"
+                            f"Notificación enviada a {user_id} para el evento '{event_name}' de la solicitud ID {solicitud_id}"
                         )
                     except Exception as e:
                         logger.error(f"No se pudo enviar notificación a {user_id}: {e}")
@@ -123,7 +118,6 @@ async def post_init(application: Application) -> None:
         except ValueError:
             logger.error(f"La hora guardada '{saved_time}' no es válida.")
 
-    # Hacemos el scheduler accesible desde los handlers
     application.job_queue.scheduler = scheduler
     scheduler.start()
     logger.info("Scheduler iniciado correctamente.")
