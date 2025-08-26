@@ -78,6 +78,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # CORRECCIÓN DE SEGURIDAD: Añadir verificación de autorización
+    if get_user_status(update.effective_user.id) != "autorizado":
+        await update.message.reply_text(
+            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
+        )
+        return
+
     help_text = (
         "Comandos disponibles para todos:\n"
         "/start - Inicia la conversación.\n"
@@ -118,7 +125,6 @@ async def handle_unauthorized(
         )
         if admin_id:
             try:
-                # CORRECCIÓN: Mensaje al admin más claro
                 text_to_admin = (
                     f"⚠️ **Nueva Solicitud de Acceso** ⚠️\n\n"
                     f"El usuario **{user_name}** (ID: `{user_id}`) quiere usar el bot.\n\n"
@@ -288,7 +294,7 @@ async def configurar_hora_command(
 
 async def autorizar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != get_admin_id():
-        await update.message.reply_text("No tienes permiso para ejecutar este comando.")
+        await update.message.reply_text("No tienes permiso para usar este comando.")
         return
     try:
         user_id_to_auth = int(context.args[0])
@@ -345,6 +351,11 @@ async def listar_usuarios_command(
 async def ver_solicitud_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
+    if get_user_status(update.effective_user.id) != "autorizado":
+        await update.message.reply_text(
+            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
+        )
+        return
     try:
         solicitud_id = int(context.args[0])
     except (IndexError, ValueError):
@@ -402,11 +413,9 @@ async def replanificar_command(
         solicitud_id = int(context.args[0])
         nueva_fecha = context.args[1]
         datetime.strptime(nueva_fecha, "%Y-%m-%d")
-
         hito_replanificado, hitos_ajustados = replanificar_hito_actual(
             solicitud_id, nueva_fecha
         )
-
         if hito_replanificado:
             nombre_largo = HITO_NOMBRES_LARGOS.get(
                 hito_replanificado, hito_replanificado
@@ -422,7 +431,6 @@ async def replanificar_command(
             await update.message.reply_text(
                 "No se pudo replanificar. Verifica el ID o si la solicitud ya fue completada."
             )
-
     except (IndexError, ValueError):
         await update.message.reply_text(
             "Uso incorrecto. Ejemplo:\n`/replanificar 15 2025-12-31`"
@@ -436,9 +444,7 @@ async def completar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     try:
         solicitud_id = int(context.args[0])
-
         hito_completado, nuevo_hito = completar_hito_actual(solicitud_id)
-
         if hito_completado:
             nombre_largo_completado = HITO_NOMBRES_LARGOS.get(
                 hito_completado, hito_completado
@@ -459,12 +465,16 @@ async def completar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text(
                 "No se pudo completar. Verifica el ID o si la solicitud ya fue completada."
             )
-
     except (IndexError, ValueError):
         await update.message.reply_text("Uso incorrecto. Ejemplo:\n`/completar 15`")
 
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if get_user_status(update.effective_user.id) != "autorizado":
+        await update.message.reply_text(
+            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
+        )
+        return
     solicitudes = get_solicitudes_for_balance()
     total, atrasadas, proximas, al_dia = calculate_balance(solicitudes)
     message = (
@@ -477,31 +487,36 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
-# --- NUEVO COMANDO ---
 async def hoy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Muestra un resumen de los hitos que vencen hoy."""
+    if get_user_status(update.effective_user.id) != "autorizado":
+        await update.message.reply_text(
+            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
+        )
+        return
     solicitudes = get_solicitudes_for_today()
-
     if not solicitudes:
         await update.message.reply_text(
             "No hay hitos con fecha de vencimiento para hoy."
         )
         return
-
     message = "<b>🗓️ Hitos con Vencimiento Hoy</b> 🗓️\n\n"
     for solicitud in solicitudes:
         hito_actual = solicitud["hito_actual"]
         nombre_hito = HITO_NOMBRES_LARGOS.get(hito_actual, hito_actual)
         message += f"<b>Solicitud ID {solicitud['id']}:</b> {solicitud['solicitud_contratacion']}\n"
         message += f"   - <b>Hito pendiente:</b> {nombre_hito}\n\n"
-
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
-# --- ConversationHandler para /balance_filtro ---
+# --- ConversationHandlers ---
 async def balance_filtro_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
+    if get_user_status(update.effective_user.id) != "autorizado":
+        await update.message.reply_text(
+            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
+        )
+        return ConversationHandler.END
     distritos = get_unique_column_values("distrito")
     if not distritos:
         await update.message.reply_text("No hay distritos disponibles para filtrar.")
@@ -564,7 +579,7 @@ async def servicio_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         f"<b>Distrito:</b> {distrito_seleccionado}\n"
         f"<b>Servicio:</b> {servicio_seleccionado}\n\n"
         f"Total de Solicitudes en Proceso: <b>{total}</b>\n"
-        f"🟢 A tiempo: <b>{al_dia}</b>\n"
+        f"� A tiempo: <b>{al_dia}</b>\n"
         f"🟡 Próximas a vencer: <b>{proximas}</b>\n"
         f"🔴 Retrasadas: <b>{atrasadas}</b>"
     )
@@ -589,10 +604,14 @@ balance_filtro_handler = ConversationHandler(
 )
 
 
-# --- ConversationHandler para /listar_solicitudes ---
 async def listar_solicitudes_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
+    if get_user_status(update.effective_user.id) != "autorizado":
+        await update.message.reply_text(
+            "No tienes permiso para usar este comando. Tu solicitud de acceso está pendiente."
+        )
+        return ConversationHandler.END
     distritos = get_unique_column_values("distrito")
     if not distritos:
         await update.message.reply_text("No hay distritos disponibles para filtrar.")
