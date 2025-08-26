@@ -18,10 +18,11 @@ from bot.handlers import (
     replanificar_command,
     completar_command,
     balance_command,
+    hoy_command,
     balance_filtro_handler,
     listar_solicitudes_handler,
     # --- NUEVO HANDLER ---
-    hoy_command,
+    retrasado_handler,
 )
 from bot.scheduler import post_init
 
@@ -50,13 +51,13 @@ def main() -> None:
     application.add_handler(CommandHandler("replanificar", replanificar_command))
     application.add_handler(CommandHandler("completar", completar_command))
     application.add_handler(CommandHandler("balance", balance_command))
-
-    # --- NUEVO HANDLER ---
     application.add_handler(CommandHandler("hoy", hoy_command))
 
     # Handlers de Conversación
     application.add_handler(balance_filtro_handler)
     application.add_handler(listar_solicitudes_handler)
+    # --- NUEVO HANDLER ---
+    application.add_handler(retrasado_handler)
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unauthorized)

@@ -114,32 +114,24 @@ def get_solicitud_by_id(solicitud_id):
 
 
 def get_solicitudes_for_balance(distrito=None, servicio=None):
-    """Obtiene todas las solicitudes activas con su hito actual y fecha planificada."""
     conn = db_connect()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-
-    # CORRECCIÓN: La consulta ahora une dinámicamente la fecha correcta para cada hito.
     query_parts = []
     for hito in HITOS_SECUENCIA:
         query_parts.append(f"WHEN '{hito}' THEN fecha_planificada_{hito}")
-
     case_statement = "CASE hito_actual " + " ".join(query_parts) + " END"
-
     query = f"SELECT ({case_statement}) as fecha_planificada FROM solicitudes WHERE hito_actual IS NOT NULL"
     params = []
-
     if distrito and distrito != "TODOS":
         query += " AND distrito = ?"
         params.append(distrito)
     if servicio and servicio != "TODOS":
         query += " AND servicio = ?"
         params.append(servicio)
-
     cursor.execute(query, params)
     results = cursor.fetchall()
     conn.close()
-    # Convertimos las filas de la base de datos a una lista de diccionarios
     return [dict(row) for row in results]
 
 
@@ -272,3 +264,35 @@ def get_solicitudes_for_today():
             solicitudes_de_hoy.append(solicitud)
     conn.close()
     return solicitudes_de_hoy
+
+
+# --- NUEVA FUNCIÓN ---
+def get_delayed_solicitudes(distrito=None, servicio=None):
+    """Obtiene las solicitudes retrasadas, opcionalmente filtradas."""
+    conn = db_connect()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    hoy_str = datetime.now().strftime("%Y-%m-%d")
+
+    query_parts = []
+    for hito in HITOS_SECUENCIA:
+        query_parts.append(f"WHEN '{hito}' THEN fecha_planificada_{hito}")
+    case_statement = "CASE hito_actual " + " ".join(query_parts) + " END"
+
+    query = f"SELECT id, solicitud_contratacion, hito_actual, ({case_statement}) as fecha_planificada FROM solicitudes WHERE hito_actual IS NOT NULL AND ({case_statement}) < ?"
+    params = [hoy_str]
+
+    if distrito and distrito != "TODOS":
+        query += " AND distrito = ?"
+        params.append(distrito)
+    if servicio and servicio != "TODOS":
+        query += " AND servicio = ?"
+        params.append(servicio)
+
+    query += " ORDER BY fecha_planificada"
+
+    cursor.execute(query, params)
+    solicitudes = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in solicitudes]

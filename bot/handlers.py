@@ -22,6 +22,7 @@ from .scheduler import check_and_send_notifications
 # Estados para los ConversationHandlers
 SELECTING_DISTRITO, SELECTING_SERVICIO = range(2)
 LIST_SELECTING_DISTRITO, LIST_SELECTING_SERVICIO = range(2, 4)
+RETRASO_SELECTING_DISTRITO, RETRASO_SELECTING_SERVICIO = range(4, 6)
 
 
 # --- Funciones de Utilidad ---
@@ -58,18 +59,15 @@ def calculate_balance(solicitudes):
 async def handle_unauthorized(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Función central para manejar a cualquier usuario no autorizado."""
     user = update.effective_user
     user_id, user_name = user.id, user.first_name
     user_status = get_user_status(user_id)
     admin_id = get_admin_id()
 
-    # Si el admin escribe un comando no reconocido, le damos ayuda.
     if user_id == admin_id and user_status == "autorizado":
         await update.message.reply_text("Comando no reconocido. Usa /help.")
         return
 
-    # Si el usuario es completamente nuevo
     if user_status is None:
         logger.info(f"Usuario nuevo no autorizado: {user_name} ({user.id}).")
         add_pending_user(user_id, user_name)
@@ -93,7 +91,6 @@ async def handle_unauthorized(
             except Exception as e:
                 logger.error(f"No se pudo notificar al admin {admin_id}: {e}")
 
-    # Si el usuario ya está registrado pero pendiente
     elif user_status == "pendiente":
         await update.message.reply_text(
             "Tu solicitud de acceso todavía está pendiente."
@@ -119,7 +116,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"¡Hola, {user.first_name}! Has sido configurado como administrador."
         )
     else:
-        # Si el usuario no es el admin y no está autorizado, se maneja aquí
         if get_user_status(user.id) != "autorizado":
             await handle_unauthorized(update, context)
         else:
@@ -138,6 +134,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/start - Inicia la conversación.\n"
         "/help - Muestra esta ayuda.\n"
         "/hoy - Muestra los hitos que vencen hoy.\n"
+        "/retrasado - Muestra un listado filtrado de solicitudes retrasadas.\n"
         "/balance - Muestra un resumen del estado de todas las solicitudes.\n"
         "/balance_filtro - Muestra un resumen filtrado por distrito y servicio.\n"
         "/listar_solicitudes - Inicia un listado filtrado de solicitudes.\n"
@@ -402,7 +399,7 @@ async def ver_solicitud_command(
                 elif dias_restantes <= dias_anticipacion:
                     estatus = f"🟡 Próximo (faltan {dias_restantes} día(s))"
                 else:
-                    estatus = f"� A tiempo (faltan {dias_restantes} día(s))"
+                    estatus = f"🟢 A tiempo (faltan {dias_restantes} día(s))"
                 message += f"➡️ <b>{nombre_hito}:</b> Planificado para {fecha_plan} ({estatus})\n"
             else:
                 message += f"⚪️ <b>{nombre_hito}:</b> Pendiente para el {fecha_plan}\n"
@@ -717,4 +714,112 @@ listar_solicitudes_handler = ConversationHandler(
         LIST_SELECTING_SERVICIO: [CallbackQueryHandler(servicio_callback_list)],
     },
     fallbacks=[CommandHandler("cancelar", cancel_list_filtro)],
+)
+
+
+async def retrasado_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if get_user_status(update.effective_user.id) != "autorizado":
+        await handle_unauthorized(update, context)
+        return ConversationHandler.END
+    distritos = get_unique_column_values("distrito")
+    if not distritos:
+        await update.message.reply_text("No hay distritos disponibles para filtrar.")
+        return ConversationHandler.END
+    keyboard = [
+        [InlineKeyboardButton(distrito, callback_data=distrito)]
+        for distrito in distritos
+    ]
+    keyboard.insert(
+        0, [InlineKeyboardButton("TODOS LOS DISTRITOS", callback_data="TODOS")]
+    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "<b>Paso 1/2:</b> Selecciona un distrito para ver las solicitudes retrasadas:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+    return RETRASO_SELECTING_DISTRITO
+
+
+async def distrito_callback_retraso(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    await query.answer()
+    distrito_seleccionado = query.data
+    context.user_data["distrito_filtro_retraso"] = distrito_seleccionado
+    servicios = get_unique_column_values("servicio", distrito=distrito_seleccionado)
+    if not servicios:
+        await query.edit_message_text(
+            "No hay servicios disponibles para este distrito."
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+    keyboard = [
+        [InlineKeyboardButton(servicio, callback_data=servicio)]
+        for servicio in servicios
+    ]
+    keyboard.insert(
+        0, [InlineKeyboardButton("TODOS LOS SERVICIOS", callback_data="TODOS")]
+    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        f"<b>Paso 2/2:</b> Distrito: <i>{distrito_seleccionado}</i>.\nAhora, selecciona un servicio:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+    return RETRASO_SELECTING_SERVICIO
+
+
+async def servicio_callback_retraso(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    await query.answer()
+    servicio_seleccionado = query.data
+    distrito_seleccionado = context.user_data.get("distrito_filtro_retraso", "TODOS")
+    await query.edit_message_text(
+        f"Buscando solicitudes retrasadas para:\n<b>Distrito:</b> {distrito_seleccionado}\n<b>Servicio:</b> {servicio_seleccionado}",
+        parse_mode=ParseMode.HTML,
+    )
+
+    solicitudes = get_delayed_solicitudes(
+        distrito=distrito_seleccionado, servicio=servicio_seleccionado
+    )
+
+    if not solicitudes:
+        await query.message.reply_text(
+            "¡Buenas noticias! No se encontraron solicitudes retrasadas con los filtros seleccionados."
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    message = f"🔴 <b>Lista de Solicitudes Retrasadas ({len(solicitudes)})</b> 🔴\n\n"
+    for solicitud in solicitudes:
+        nombre_hito = HITO_NOMBRES_LARGOS.get(
+            solicitud["hito_actual"], solicitud["hito_actual"]
+        )
+        message += (
+            f"<b>ID {solicitud['id']}:</b> {solicitud['solicitud_contratacion']}\n"
+        )
+        message += f"  - <b>Hito Retrasado:</b> {nombre_hito}\n"
+        message += f"  - <b>Fecha Límite:</b> {solicitud['fecha_planificada']}\n\n"
+
+    chunk_size = 4096
+    for i in range(0, len(message), chunk_size):
+        await query.message.reply_text(
+            message[i : i + chunk_size], parse_mode=ParseMode.HTML
+        )
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+retrasado_handler = ConversationHandler(
+    entry_points=[CommandHandler("retrasado", retrasado_start)],
+    states={
+        RETRASO_SELECTING_DISTRITO: [CallbackQueryHandler(distrito_callback_retraso)],
+        RETRASO_SELECTING_SERVICIO: [CallbackQueryHandler(servicio_callback_retraso)],
+    },
+    fallbacks=[CommandHandler("cancelar", cancel_filtro)],
 )
