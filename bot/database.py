@@ -135,14 +135,27 @@ def get_solicitudes_for_balance(distrito=None, servicio=None):
     return [dict(row) for row in results]
 
 
-def get_unique_column_values(column_name, distrito=None):
+def get_unique_column_values(column_name, distrito=None, status="all"):
+    """Obtiene valores únicos de una columna, con filtros opcionales de estado y distrito."""
     conn = db_connect()
     cursor = conn.cursor()
+
     query = f"SELECT DISTINCT {column_name} FROM solicitudes WHERE {column_name} IS NOT NULL AND {column_name} != ''"
     params = []
+
+    if status == "delayed":
+        hoy_str = datetime.now().strftime("%Y-%m-%d")
+        case_statement = "CASE hito_actual "
+        for hito in HITOS_SECUENCIA:
+            case_statement += f"WHEN '{hito}' THEN fecha_planificada_{hito} "
+        case_statement += "END"
+        query += f" AND hito_actual IS NOT NULL AND ({case_statement}) < ?"
+        params.append(hoy_str)
+
     if distrito and distrito != "TODOS":
         query += " AND distrito = ?"
         params.append(distrito)
+
     query += f" ORDER BY {column_name}"
     cursor.execute(query, params)
     values = [row[0] for row in cursor.fetchall()]
@@ -266,32 +279,24 @@ def get_solicitudes_for_today():
     return solicitudes_de_hoy
 
 
-# --- NUEVA FUNCIÓN ---
 def get_delayed_solicitudes(distrito=None, servicio=None):
-    """Obtiene las solicitudes retrasadas, opcionalmente filtradas."""
     conn = db_connect()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-
     hoy_str = datetime.now().strftime("%Y-%m-%d")
-
     query_parts = []
     for hito in HITOS_SECUENCIA:
         query_parts.append(f"WHEN '{hito}' THEN fecha_planificada_{hito}")
     case_statement = "CASE hito_actual " + " ".join(query_parts) + " END"
-
     query = f"SELECT id, solicitud_contratacion, hito_actual, ({case_statement}) as fecha_planificada FROM solicitudes WHERE hito_actual IS NOT NULL AND ({case_statement}) < ?"
     params = [hoy_str]
-
     if distrito and distrito != "TODOS":
         query += " AND distrito = ?"
         params.append(distrito)
     if servicio and servicio != "TODOS":
         query += " AND servicio = ?"
         params.append(servicio)
-
     query += " ORDER BY fecha_planificada"
-
     cursor.execute(query, params)
     solicitudes = cursor.fetchall()
     conn.close()

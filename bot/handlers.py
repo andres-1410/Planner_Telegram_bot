@@ -152,6 +152,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 
 
+# CORRECCIÓN: Se reinserta la función que faltaba
 async def cargar_excel_local(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -510,7 +511,20 @@ async def hoy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
-# --- ConversationHandlers ---
+# --- Funciones de Cancelación ---
+async def cancel_filtro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Función genérica para cancelar cualquier conversación."""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.edit_message_text("Operación cancelada.")
+    else:
+        await update.message.reply_text("Operación cancelada.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+# --- ConversationHandler para /balance_filtro ---
 async def balance_filtro_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
@@ -588,12 +602,6 @@ async def servicio_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return ConversationHandler.END
 
 
-async def cancel_filtro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Operación de filtrado cancelada.")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
 balance_filtro_handler = ConversationHandler(
     entry_points=[CommandHandler("balance_filtro", balance_filtro_start)],
     states={
@@ -604,6 +612,7 @@ balance_filtro_handler = ConversationHandler(
 )
 
 
+# --- ConversationHandler para /listar_solicitudes ---
 async def listar_solicitudes_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
@@ -701,29 +710,26 @@ async def servicio_callback_list(
     return ConversationHandler.END
 
 
-async def cancel_list_filtro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Operación de listado cancelada.")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
 listar_solicitudes_handler = ConversationHandler(
     entry_points=[CommandHandler("listar_solicitudes", listar_solicitudes_start)],
     states={
         LIST_SELECTING_DISTRITO: [CallbackQueryHandler(distrito_callback_list)],
         LIST_SELECTING_SERVICIO: [CallbackQueryHandler(servicio_callback_list)],
     },
-    fallbacks=[CommandHandler("cancelar", cancel_list_filtro)],
+    fallbacks=[CommandHandler("cancelar", cancel_filtro)],
 )
 
 
+# --- ConversationHandler para /retrasado ---
 async def retrasado_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if get_user_status(update.effective_user.id) != "autorizado":
         await handle_unauthorized(update, context)
         return ConversationHandler.END
-    distritos = get_unique_column_values("distrito")
+    distritos = get_unique_column_values("distrito", status="delayed")
     if not distritos:
-        await update.message.reply_text("No hay distritos disponibles para filtrar.")
+        await update.message.reply_text(
+            "¡Buenas noticias! No hay distritos con solicitudes retrasadas."
+        )
         return ConversationHandler.END
     keyboard = [
         [InlineKeyboardButton(distrito, callback_data=distrito)]
@@ -748,10 +754,12 @@ async def distrito_callback_retraso(
     await query.answer()
     distrito_seleccionado = query.data
     context.user_data["distrito_filtro_retraso"] = distrito_seleccionado
-    servicios = get_unique_column_values("servicio", distrito=distrito_seleccionado)
+    servicios = get_unique_column_values(
+        "servicio", distrito=distrito_seleccionado, status="delayed"
+    )
     if not servicios:
         await query.edit_message_text(
-            "No hay servicios disponibles para este distrito."
+            "No hay servicios con solicitudes retrasadas para este distrito."
         )
         context.user_data.clear()
         return ConversationHandler.END
