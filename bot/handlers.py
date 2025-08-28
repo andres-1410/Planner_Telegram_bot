@@ -36,6 +36,17 @@ def safe_date_convert(date_value):
         return None
 
 
+# --- NUEVA FUNCIÓN ---
+def format_date_for_display(date_str_db):
+    """Convierte una fecha de formato YYYY-MM-DD a DD/MM/YYYY para mostrar al usuario."""
+    if not date_str_db:
+        return "No especificada"
+    try:
+        return datetime.strptime(date_str_db, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except (ValueError, TypeError):
+        return date_str_db  # Devuelve el original si hay un error
+
+
 def calculate_balance(solicitudes):
     total = len(solicitudes)
     atrasadas, proximas, al_dia = 0, 0, 0
@@ -140,7 +151,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/listar_solicitudes - Inicia un listado filtrado de solicitudes.\n"
         "/ver_solicitud [ID] - Muestra el detalle de una solicitud.\n\n"
         "<b>Comandos de Gestión (Rol: contrataciones o admin):</b>\n"
-        "/replanificar [ID] [fecha] - Cambia la fecha del hito actual.\n"
+        "/replanificar [ID] [DD/MM/YYYY] - Cambia la fecha del hito actual.\n"
         "/completar [ID] - Marca el hito actual como completado.\n\n"
         "<b>Comandos de Administrador (Rol: admin):</b>\n"
         "/cargar_excel - Carga datos desde el archivo.\n"
@@ -152,7 +163,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 
 
-# CORRECCIÓN: Se reinserta la función que faltaba
 async def cargar_excel_local(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -388,7 +398,7 @@ async def ver_solicitud_command(
         fecha_plan = solicitud[f"fecha_planificada_{hito_key}"]
         fecha_real = solicitud[f"fecha_real_{hito_key}"]
         if fecha_real:
-            message += f"✅ <b>{nombre_hito}:</b> Completado el {fecha_real}\n"
+            message += f"✅ <b>{nombre_hito}:</b> Completado el {format_date_for_display(fecha_real)}\n"
         elif fecha_plan:
             if hito_key == hito_actual_key:
                 fecha_plan_dt = datetime.strptime(fecha_plan, "%Y-%m-%d")
@@ -401,9 +411,9 @@ async def ver_solicitud_command(
                     estatus = f"🟡 Próximo (faltan {dias_restantes} día(s))"
                 else:
                     estatus = f"🟢 A tiempo (faltan {dias_restantes} día(s))"
-                message += f"➡️ <b>{nombre_hito}:</b> Planificado para {fecha_plan} ({estatus})\n"
+                message += f"➡️ <b>{nombre_hito}:</b> Planificado para {format_date_for_display(fecha_plan)} ({estatus})\n"
             else:
-                message += f"⚪️ <b>{nombre_hito}:</b> Pendiente para el {fecha_plan}\n"
+                message += f"⚪️ <b>{nombre_hito}:</b> Pendiente para el {format_date_for_display(fecha_plan)}\n"
         else:
             message += f"⚪️ <b>{nombre_hito}:</b> Sin fecha planificada\n"
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
@@ -418,29 +428,33 @@ async def replanificar_command(
         return
     try:
         solicitud_id = int(context.args[0])
-        nueva_fecha = context.args[1]
-        datetime.strptime(nueva_fecha, "%Y-%m-%d")
+        nueva_fecha_usuario = context.args[1]
+        # Validar y convertir fecha de entrada del usuario
+        nueva_fecha_dt = datetime.strptime(nueva_fecha_usuario, "%d/%m/%Y")
+        nueva_fecha_db = nueva_fecha_dt.strftime("%Y-%m-%d")
+
         hito_replanificado, hitos_ajustados = replanificar_hito_actual(
-            solicitud_id, nueva_fecha
+            solicitud_id, nueva_fecha_db
         )
         if hito_replanificado:
             nombre_largo = HITO_NOMBRES_LARGOS.get(
                 hito_replanificado, hito_replanificado
             )
-            message = f"✅ Hito '{nombre_largo}' de la solicitud {solicitud_id} replanificado para el {nueva_fecha}."
+            message = f"✅ Hito '{nombre_largo}' de la solicitud {solicitud_id} replanificado para el {nueva_fecha_usuario}."
             if hitos_ajustados:
                 message += "\n\n⚠️ <b>Hitos futuros ajustados automáticamente:</b>\n"
                 for hito, fecha in hitos_ajustados:
                     nombre_largo_ajustado = HITO_NOMBRES_LARGOS.get(hito, hito)
-                    message += f"- {nombre_largo_ajustado} movido a {fecha}\n"
+                    message += f"- {nombre_largo_ajustado} movido a {format_date_for_display(fecha)}\n"
             await update.message.reply_text(message, parse_mode=ParseMode.HTML)
         else:
             await update.message.reply_text(
                 "No se pudo replanificar. Verifica el ID o si la solicitud ya fue completada."
             )
+
     except (IndexError, ValueError):
         await update.message.reply_text(
-            "Uso incorrecto. Ejemplo:\n`/replanificar 15 2025-12-31`"
+            "Uso incorrecto. Ejemplo:\n`/replanificar 15 31/12/2025`"
         )
 
 
@@ -511,20 +525,7 @@ async def hoy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
-# --- Funciones de Cancelación ---
-async def cancel_filtro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Función genérica para cancelar cualquier conversación."""
-    query = update.callback_query
-    if query:
-        await query.answer()
-        await query.edit_message_text("Operación cancelada.")
-    else:
-        await update.message.reply_text("Operación cancelada.")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
-# --- ConversationHandler para /balance_filtro ---
+# --- ConversationHandlers ---
 async def balance_filtro_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
@@ -602,6 +603,12 @@ async def servicio_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return ConversationHandler.END
 
 
+async def cancel_filtro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Operación de filtrado cancelada.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
 balance_filtro_handler = ConversationHandler(
     entry_points=[CommandHandler("balance_filtro", balance_filtro_start)],
     states={
@@ -612,7 +619,6 @@ balance_filtro_handler = ConversationHandler(
 )
 
 
-# --- ConversationHandler para /listar_solicitudes ---
 async def listar_solicitudes_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
@@ -710,17 +716,22 @@ async def servicio_callback_list(
     return ConversationHandler.END
 
 
+async def cancel_list_filtro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Operación de listado cancelada.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
 listar_solicitudes_handler = ConversationHandler(
     entry_points=[CommandHandler("listar_solicitudes", listar_solicitudes_start)],
     states={
         LIST_SELECTING_DISTRITO: [CallbackQueryHandler(distrito_callback_list)],
         LIST_SELECTING_SERVICIO: [CallbackQueryHandler(servicio_callback_list)],
     },
-    fallbacks=[CommandHandler("cancelar", cancel_filtro)],
+    fallbacks=[CommandHandler("cancelar", cancel_list_filtro)],
 )
 
 
-# --- ConversationHandler para /retrasado ---
 async def retrasado_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if get_user_status(update.effective_user.id) != "autorizado":
         await handle_unauthorized(update, context)
@@ -811,7 +822,7 @@ async def servicio_callback_retraso(
             f"<b>ID {solicitud['id']}:</b> {solicitud['solicitud_contratacion']}\n"
         )
         message += f"  - <b>Hito Retrasado:</b> {nombre_hito}\n"
-        message += f"  - <b>Fecha Límite:</b> {solicitud['fecha_planificada']}\n\n"
+        message += f"  - <b>Fecha Límite:</b> {format_date_for_display(solicitud['fecha_planificada'])}\n\n"
 
     chunk_size = 4096
     for i in range(0, len(message), chunk_size):

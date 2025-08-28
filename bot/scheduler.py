@@ -2,7 +2,7 @@
 # Lógica para programar y ejecutar las notificaciones.
 
 import html
-import sqlite3  # <-- CORRECCIÓN: Se añadió la importación que faltaba.
+import sqlite3
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram.ext import Application
@@ -25,17 +25,21 @@ async def check_and_send_notifications(context: Application):
 
     try:
         days_in_advance = int(days_in_advance_str)
-        target_date = (datetime.now() + timedelta(days=days_in_advance)).strftime(
+        # La fecha para comparar con la BD se mantiene en formato YYYY-MM-DD
+        target_date_db = (datetime.now() + timedelta(days=days_in_advance)).strftime(
             "%Y-%m-%d"
         )
-        logger.info(f"Buscando eventos para la fecha: {target_date}")
+        # La fecha para mostrar al usuario se formatea a DD/MM/YYYY
+        target_date_display = datetime.strptime(target_date_db, "%Y-%m-%d").strftime(
+            "%d/%m/%Y"
+        )
+
+        logger.info(f"Buscando eventos para la fecha: {target_date_db}")
 
         conn = db_connect()
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        # La lógica ahora se enfoca solo en el hito_actual de cada solicitud.
-        # 1. Obtenemos todas las solicitudes que todavía están activas.
         cursor.execute(
             "SELECT id, solicitud_contratacion, hito_actual FROM solicitudes WHERE hito_actual IS NOT NULL"
         )
@@ -51,14 +55,13 @@ async def check_and_send_notifications(context: Application):
             hito_actual = solicitud["hito_actual"]
             fecha_plan_col = f"fecha_planificada_{hito_actual}"
 
-            # 2. Obtenemos la fecha específica del hito actual para esta solicitud.
             cursor.execute(
                 f"SELECT {fecha_plan_col} FROM solicitudes WHERE id = ?",
                 (solicitud["id"],),
             )
             fecha_plan_result = cursor.fetchone()
 
-            if fecha_plan_result and fecha_plan_result[0] == target_date:
+            if fecha_plan_result and fecha_plan_result[0] == target_date_db:
                 solicitud_id = solicitud["id"]
                 solicitud_name = solicitud["solicitud_contratacion"]
                 event_name = HITO_NOMBRES_LARGOS.get(hito_actual, hito_actual)
@@ -73,7 +76,7 @@ async def check_and_send_notifications(context: Application):
                 message = (
                     f"🔔 <b>Alerta de Vencimiento</b> 🔔\n\n"
                     f"La fecha para el evento <b>{event_name_safe}</b> de la solicitud '<i>{solicitud_name_safe}</i>' está próxima.\n\n"
-                    f"🗓️ <b>Fecha Planificada:</b> {target_date}\n"
+                    f"🗓️ <b>Fecha Planificada:</b> {target_date_display}\n"
                     f"⏳ <b>Anticipación:</b> {days_in_advance} día(s)"
                 )
                 for user_id in users_to_notify:
