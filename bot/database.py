@@ -113,30 +113,39 @@ def get_solicitud_by_id(solicitud_id):
     return solicitud
 
 
-def get_solicitudes_for_balance(distrito=None, servicio=None):
+def get_solicitudes_for_balance(distrito=None, gerencia=None, servicio=None):
+    """Obtiene todas las solicitudes activas con su gerencia, hito actual y fecha planificada."""
     conn = db_connect()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
+
     query_parts = []
     for hito in HITOS_SECUENCIA:
         query_parts.append(f"WHEN '{hito}' THEN fecha_planificada_{hito}")
     case_statement = "CASE hito_actual " + " ".join(query_parts) + " END"
-    query = f"SELECT ({case_statement}) as fecha_planificada FROM solicitudes WHERE hito_actual IS NOT NULL"
+
+    # CORRECCIÓN: Ahora también seleccionamos la gerencia
+    query = f"SELECT gerencia, ({case_statement}) as fecha_planificada FROM solicitudes WHERE hito_actual IS NOT NULL"
     params = []
+
     if distrito and distrito != "TODOS":
         query += " AND distrito = ?"
         params.append(distrito)
+    if gerencia and gerencia != "TODOS":
+        query += " AND gerencia = ?"
+        params.append(gerencia)
     if servicio and servicio != "TODOS":
         query += " AND servicio = ?"
         params.append(servicio)
+
     cursor.execute(query, params)
     results = cursor.fetchall()
     conn.close()
     return [dict(row) for row in results]
 
 
-def get_unique_column_values(column_name, distrito=None, status="all"):
-    """Obtiene valores únicos de una columna, con filtros opcionales de estado y distrito."""
+def get_unique_column_values(column_name, distrito=None, gerencia=None, status="all"):
+    """Obtiene valores únicos de una columna, con filtros opcionales."""
     conn = db_connect()
     cursor = conn.cursor()
 
@@ -155,6 +164,9 @@ def get_unique_column_values(column_name, distrito=None, status="all"):
     if distrito and distrito != "TODOS":
         query += " AND distrito = ?"
         params.append(distrito)
+    if gerencia and gerencia != "TODOS":
+        query += " AND gerencia = ?"
+        params.append(gerencia)
 
     query += f" ORDER BY {column_name}"
     cursor.execute(query, params)

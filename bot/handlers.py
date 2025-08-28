@@ -23,6 +23,10 @@ from .scheduler import check_and_send_notifications
 SELECTING_DISTRITO, SELECTING_SERVICIO = range(2)
 LIST_SELECTING_DISTRITO, LIST_SELECTING_SERVICIO = range(2, 4)
 RETRASO_SELECTING_DISTRITO, RETRASO_SELECTING_SERVICIO = range(4, 6)
+# --- NUEVOS ESTADOS ---
+REPORTE_SELECTING_DISTRITO, REPORTE_SELECTING_GERENCIA, REPORTE_SELECTING_SERVICIO = (
+    range(6, 9)
+)
 
 
 # --- Funciones de Utilidad ---
@@ -36,7 +40,6 @@ def safe_date_convert(date_value):
         return None
 
 
-# --- NUEVA FUNCIÓN ---
 def format_date_for_display(date_str_db):
     """Convierte una fecha de formato YYYY-MM-DD a DD/MM/YYYY para mostrar al usuario."""
     if not date_str_db:
@@ -44,7 +47,21 @@ def format_date_for_display(date_str_db):
     try:
         return datetime.strptime(date_str_db, "%Y-%m-%d").strftime("%d/%m/%Y")
     except (ValueError, TypeError):
-        return date_str_db  # Devuelve el original si hay un error
+        return date_str_db
+
+
+def get_weekday_in_spanish(date_obj):
+    """Devuelve el nombre del día de la semana en español."""
+    weekdays = [
+        "Lunes",
+        "Martes",
+        "Miércoles",
+        "Jueves",
+        "Viernes",
+        "Sábado",
+        "Domingo",
+    ]
+    return weekdays[date_obj.weekday()]
 
 
 def calculate_balance(solicitudes):
@@ -70,6 +87,7 @@ def calculate_balance(solicitudes):
 async def handle_unauthorized(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
+    """Función central para manejar a cualquier usuario no autorizado."""
     user = update.effective_user
     user_id, user_name = user.id, user.first_name
     user_status = get_user_status(user_id)
@@ -154,7 +172,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/replanificar [ID] [DD/MM/YYYY] - Cambia la fecha del hito actual.\n"
         "/completar [ID] - Marca el hito actual como completado.\n\n"
         "<b>Comandos de Administrador (Rol: admin):</b>\n"
-        "/cargar_excel - Carga datos desde el archivo.\n"
+        "/cargar_excel - Actualiza los datos desde el archivo Excel.\n"
         "/configurar_dias N - Define los días de antelación.\n"
         "/configurar_hora HH:MM - Define la hora de las alertas.\n"
         "/listar_usuarios - Muestra todos los usuarios registrados.\n"
@@ -175,93 +193,102 @@ async def cargar_excel_local(
             f"❌ Error: No se encontró el archivo {file_path}."
         )
         return
-    await update.message.reply_text(f"Archivo {file_path} encontrado. Procesando...")
+    await update.message.reply_text(
+        f"Archivo {file_path} encontrado. Actualizando datos..."
+    )
     try:
         df = pd.read_excel(file_path).fillna("")
         conn = db_connect()
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM solicitudes")
+
         column_mapping = {
-            "SOLICITUD DE CONTRATACIÓN": "solicitud_contratacion",
-            "SERVICIO": "servicio",
-            "DISTRITO": "distrito",
-            "PRESUPUESTO BASE": "presupuesto_base",
-            "FECHA DE SOLICITUD": "fecha_solicitud",
-            "ETAPA DE CONTRATACIÓN": "etapa_contratacion",
-            "ESTRATEGIA DE CONTRATACIÓN": "fecha_planificada_estrategia",
-            "ACTA DE INICIO - SOLICITUD A": "fecha_planificada_inicio",
-            "DECISIÓN DE INICIO": "fecha_planificada_decision",
-            "ACTA DE DECISIÓN DE OTORGAMIENTO": "fecha_planificada_acta_otorgamiento",
-            "NOTIFICACIÓN DE OTORGAMIENTO": "fecha_planificada_notif_otorgamiento",
-            "CONTRATO": "fecha_planificada_contrato",
+            "N": "id",
+            "GERENCIA": "gerencia",
         }
         df_renamed = df.rename(columns=column_mapping)
+
+        if "id" not in df_renamed.columns or "gerencia" not in df_renamed.columns:
+            await update.message.reply_text(
+                "❌ Error: El archivo Excel debe contener las columnas 'N' y 'GERENCIA'."
+            )
+            return
+
+        updated_count = 0
         for index, row in df_renamed.iterrows():
-            fecha_solicitud_val = safe_date_convert(row.get("fecha_solicitud"))
-            completed_placeholder_date = (
-                fecha_solicitud_val
-                if fecha_solicitud_val
-                else datetime.now().strftime("%Y-%m-%d")
-            )
-            hito_actual = None
-            hitos_data = {}
-            for hito_key in HITOS_SECUENCIA:
-                excel_val = row.get(f"fecha_planificada_{hito_key}")
-                if str(excel_val).strip() == "-":
-                    hitos_data[f"fecha_real_{hito_key}"] = completed_placeholder_date
-                    hitos_data[f"fecha_planificada_{hito_key}"] = None
-                else:
-                    fecha_plan = safe_date_convert(excel_val)
-                    hitos_data[f"fecha_planificada_{hito_key}"] = fecha_plan
-                    hitos_data[f"fecha_real_{hito_key}"] = None
-                    if fecha_plan and not hito_actual:
-                        hito_actual = hito_key
-            data_tuple = (
-                row.get("solicitud_contratacion"),
-                row.get("servicio"),
-                row.get("distrito"),
-                row.get("presupuesto_base"),
-                fecha_solicitud_val,
-                row.get("etapa_contratacion"),
-                hito_actual,
-                hitos_data["fecha_planificada_estrategia"],
-                hitos_data["fecha_real_estrategia"],
-                hitos_data["fecha_planificada_inicio"],
-                hitos_data["fecha_real_inicio"],
-                hitos_data["fecha_planificada_decision"],
-                hitos_data["fecha_real_decision"],
-                hitos_data["fecha_planificada_acta_otorgamiento"],
-                hitos_data["fecha_real_acta_otorgamiento"],
-                hitos_data["fecha_planificada_notif_otorgamiento"],
-                hitos_data["fecha_real_notif_otorgamiento"],
-                hitos_data["fecha_planificada_contrato"],
-                hitos_data["fecha_real_contrato"],
-            )
-            cursor.execute(
-                """
-                INSERT INTO solicitudes (
-                    solicitud_contratacion, servicio, distrito, presupuesto_base, fecha_solicitud,
-                    etapa_contratacion, hito_actual, 
-                    fecha_planificada_estrategia, fecha_real_estrategia,
-                    fecha_planificada_inicio, fecha_real_inicio,
-                    fecha_planificada_decision, fecha_real_decision,
-                    fecha_planificada_acta_otorgamiento, fecha_real_acta_otorgamiento,
-                    fecha_planificada_notif_otorgamiento, fecha_real_notif_otorgamiento,
-                    fecha_planificada_contrato, fecha_real_contrato
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                data_tuple,
-            )
+            solicitud_id = row.get("id")
+            gerencia = row.get("gerencia")
+
+            if pd.notna(solicitud_id) and pd.notna(gerencia):
+                cursor.execute(
+                    "UPDATE solicitudes SET gerencia = ? WHERE id = ?",
+                    (str(gerencia), int(solicitud_id)),
+                )
+                if cursor.rowcount > 0:
+                    updated_count += 1
+
         conn.commit()
         conn.close()
         await update.message.reply_text(
-            f"✅ ¡Éxito! Se han cargado {len(df)} solicitudes."
+            f"✅ ¡Éxito! Se han actualizado {updated_count} solicitudes con la nueva información de gerencia."
         )
     except Exception as e:
         logger.error(f"Error al procesar el archivo Excel local: {e}")
         await update.message.reply_text(
             f"❌ Ocurrió un error al procesar el archivo: {e}"
         )
+
+
+async def ver_solicitud_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if get_user_status(update.effective_user.id) != "autorizado":
+        await handle_unauthorized(update, context)
+        return
+    try:
+        solicitud_id = int(context.args[0])
+    except (IndexError, ValueError):
+        await update.message.reply_text("Uso incorrecto. Ejemplo: `/ver_solicitud 1`")
+        return
+    solicitud = get_solicitud_by_id(solicitud_id)
+    if not solicitud:
+        await update.message.reply_text(
+            f"No se encontró ninguna solicitud con el ID {solicitud_id}."
+        )
+        return
+    message = f"<b>Detalles de la Solicitud ID: {solicitud['id']}</b>\n"
+    message += f"<b>Nombre:</b> {solicitud['solicitud_contratacion']}\n"
+    message += f"<b>Gerencia:</b> {solicitud['gerencia'] or 'No especificada'}\n"
+    message += f"<b>Etapa (Manual):</b> {solicitud['etapa_contratacion'] or 'No especificada'}\n"
+    hito_actual_key = solicitud["hito_actual"]
+    if hito_actual_key:
+        nombre_largo = HITO_NOMBRES_LARGOS.get(hito_actual_key, hito_actual_key)
+        message += f"<b>Próximo Hito:</b> {nombre_largo}\n\n"
+    else:
+        message += "<b>Estatus General:</b> 🎉 ¡Completado! 🎉\n\n"
+    for hito_key in HITOS_SECUENCIA:
+        nombre_hito = HITO_NOMBRES_LARGOS.get(hito_key, hito_key)
+        fecha_plan = solicitud[f"fecha_planificada_{hito_key}"]
+        fecha_real = solicitud[f"fecha_real_{hito_key}"]
+        if fecha_real:
+            message += f"✅ <b>{nombre_hito}:</b> Completado el {format_date_for_display(fecha_real)}\n"
+        elif fecha_plan:
+            if hito_key == hito_actual_key:
+                fecha_plan_dt = datetime.strptime(fecha_plan, "%Y-%m-%d")
+                hoy = datetime.now()
+                dias_restantes = (fecha_plan_dt.date() - hoy.date()).days
+                dias_anticipacion = int(get_config_value("dias_anticipacion") or 0)
+                if dias_restantes < 0:
+                    estatus = f"🔴 Retrasado por {-dias_restantes} día(s)"
+                elif dias_restantes <= dias_anticipacion:
+                    estatus = f"🟡 Próximo (faltan {dias_restantes} día(s))"
+                else:
+                    estatus = f"� A tiempo (faltan {dias_restantes} día(s))"
+                message += f"➡️ <b>{nombre_hito}:</b> Planificado para {format_date_for_display(fecha_plan)} ({estatus})\n"
+            else:
+                message += f"⚪️ <b>{nombre_hito}:</b> Pendiente para el {format_date_for_display(fecha_plan)}\n"
+        else:
+            message += f"⚪️ <b>{nombre_hito}:</b> Sin fecha planificada\n"
+    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
 async def configurar_dias_command(
@@ -367,58 +394,6 @@ async def listar_usuarios_command(
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
-async def ver_solicitud_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    if get_user_status(update.effective_user.id) != "autorizado":
-        await handle_unauthorized(update, context)
-        return
-    try:
-        solicitud_id = int(context.args[0])
-    except (IndexError, ValueError):
-        await update.message.reply_text("Uso incorrecto. Ejemplo: `/ver_solicitud 1`")
-        return
-    solicitud = get_solicitud_by_id(solicitud_id)
-    if not solicitud:
-        await update.message.reply_text(
-            f"No se encontró ninguna solicitud con el ID {solicitud_id}."
-        )
-        return
-    message = f"<b>Detalles de la Solicitud ID: {solicitud['id']}</b>\n"
-    message += f"<b>Nombre:</b> {solicitud['solicitud_contratacion']}\n"
-    message += f"<b>Etapa (Manual):</b> {solicitud['etapa_contratacion'] or 'No especificada'}\n"
-    hito_actual_key = solicitud["hito_actual"]
-    if hito_actual_key:
-        nombre_largo = HITO_NOMBRES_LARGOS.get(hito_actual_key, hito_actual_key)
-        message += f"<b>Próximo Hito:</b> {nombre_largo}\n\n"
-    else:
-        message += "<b>Estatus General:</b> 🎉 ¡Completado! 🎉\n\n"
-    for hito_key in HITOS_SECUENCIA:
-        nombre_hito = HITO_NOMBRES_LARGOS.get(hito_key, hito_key)
-        fecha_plan = solicitud[f"fecha_planificada_{hito_key}"]
-        fecha_real = solicitud[f"fecha_real_{hito_key}"]
-        if fecha_real:
-            message += f"✅ <b>{nombre_hito}:</b> Completado el {format_date_for_display(fecha_real)}\n"
-        elif fecha_plan:
-            if hito_key == hito_actual_key:
-                fecha_plan_dt = datetime.strptime(fecha_plan, "%Y-%m-%d")
-                hoy = datetime.now()
-                dias_restantes = (fecha_plan_dt.date() - hoy.date()).days
-                dias_anticipacion = int(get_config_value("dias_anticipacion") or 0)
-                if dias_restantes < 0:
-                    estatus = f"🔴 Retrasado por {-dias_restantes} día(s)"
-                elif dias_restantes <= dias_anticipacion:
-                    estatus = f"🟡 Próximo (faltan {dias_restantes} día(s))"
-                else:
-                    estatus = f"🟢 A tiempo (faltan {dias_restantes} día(s))"
-                message += f"➡️ <b>{nombre_hito}:</b> Planificado para {format_date_for_display(fecha_plan)} ({estatus})\n"
-            else:
-                message += f"⚪️ <b>{nombre_hito}:</b> Pendiente para el {format_date_for_display(fecha_plan)}\n"
-        else:
-            message += f"⚪️ <b>{nombre_hito}:</b> Sin fecha planificada\n"
-    await update.message.reply_text(message, parse_mode=ParseMode.HTML)
-
-
 async def replanificar_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -429,7 +404,6 @@ async def replanificar_command(
     try:
         solicitud_id = int(context.args[0])
         nueva_fecha_usuario = context.args[1]
-        # Validar y convertir fecha de entrada del usuario
         nueva_fecha_dt = datetime.strptime(nueva_fecha_usuario, "%d/%m/%Y")
         nueva_fecha_db = nueva_fecha_dt.strftime("%Y-%m-%d")
 
@@ -839,6 +813,169 @@ retrasado_handler = ConversationHandler(
     states={
         RETRASO_SELECTING_DISTRITO: [CallbackQueryHandler(distrito_callback_retraso)],
         RETRASO_SELECTING_SERVICIO: [CallbackQueryHandler(servicio_callback_retraso)],
+    },
+    fallbacks=[CommandHandler("cancelar", cancel_filtro)],
+)
+
+
+async def reporte_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if get_user_role(update.effective_user.id) != "admin":
+        await update.message.reply_text("No tienes permiso para ejecutar este comando.")
+        return ConversationHandler.END
+
+    distritos = get_unique_column_values("distrito")
+    if not distritos:
+        await update.message.reply_text(
+            "No hay distritos disponibles para generar el reporte."
+        )
+        return ConversationHandler.END
+
+    keyboard = [
+        [InlineKeyboardButton(distrito, callback_data=distrito)]
+        for distrito in distritos
+    ]
+    keyboard.insert(
+        0, [InlineKeyboardButton("TODOS LOS DISTRITOS", callback_data="TODOS")]
+    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "<b>Reporte - Paso 1/3:</b> Selecciona un distrito:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+    return REPORTE_SELECTING_DISTRITO
+
+
+async def distrito_callback_reporte(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    await query.answer()
+    distrito = query.data
+    context.user_data["reporte_distrito"] = distrito
+
+    gerencias = get_unique_column_values("gerencia", distrito=distrito)
+    if not gerencias:
+        await query.edit_message_text(
+            "No hay gerencias disponibles para este distrito."
+        )
+        return ConversationHandler.END
+
+    keyboard = [[InlineKeyboardButton(g, callback_data=g)] for g in gerencias]
+    keyboard.insert(
+        0, [InlineKeyboardButton("TODAS LAS GERENCIAS", callback_data="TODOS")]
+    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        f"<b>Reporte - Paso 2/3:</b> Selecciona una gerencia:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+    return REPORTE_SELECTING_GERENCIA
+
+
+async def gerencia_callback_reporte(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    await query.answer()
+    gerencia = query.data
+    context.user_data["reporte_gerencia"] = gerencia
+    distrito = context.user_data["reporte_distrito"]
+
+    servicios = get_unique_column_values(
+        "servicio", distrito=distrito, gerencia=gerencia
+    )
+    if not servicios:
+        await query.edit_message_text(
+            "No hay servicios disponibles para esta selección."
+        )
+        return ConversationHandler.END
+
+    keyboard = [[InlineKeyboardButton(s, callback_data=s)] for s in servicios]
+    keyboard.insert(
+        0, [InlineKeyboardButton("TODOS LOS SERVICIOS", callback_data="TODOS")]
+    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        f"<b>Reporte - Paso 3/3:</b> Selecciona un servicio:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+    return REPORTE_SELECTING_SERVICIO
+
+
+async def servicio_callback_reporte(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    await query.answer()
+    servicio = query.data
+    distrito = context.user_data.get("reporte_distrito", "TODOS")
+    gerencia_filtro = context.user_data.get("reporte_gerencia", "TODOS")
+
+    await query.edit_message_text("Generando reporte...")
+
+    solicitudes = get_solicitudes_for_balance(
+        distrito=distrito, gerencia=gerencia_filtro, servicio=servicio
+    )
+
+    # Agrupar solicitudes por gerencia
+    reporte_por_gerencia = {}
+    for sol in solicitudes:
+        g = sol.get("gerencia")
+        if g:
+            if g not in reporte_por_gerencia:
+                reporte_por_gerencia[g] = []
+            reporte_por_gerencia[g].append(sol)
+
+    if not reporte_por_gerencia:
+        await query.edit_message_text(
+            "No se encontraron solicitudes activas con los filtros seleccionados."
+        )
+        return ConversationHandler.END
+
+    # Construir el mensaje final
+    final_message = "<b>PLAZOS CUMPLIDOS DENTRO DEL PLAN DE CONTRATACIONES Y PROYECTOS DE INVERSIÓN</b>\n\n"
+
+    for gerencia, solicitudes_gerencia in reporte_por_gerencia.items():
+        total, atrasadas, proximas, al_dia = calculate_balance(solicitudes_gerencia)
+
+        min_future_date = None
+        hoy = datetime.now().date()
+        for sol in solicitudes_gerencia:
+            fecha_plan_str = sol.get("fecha_planificada")
+            if fecha_plan_str:
+                fecha_plan = datetime.strptime(fecha_plan_str, "%Y-%m-%d").date()
+                if fecha_plan >= hoy:
+                    if min_future_date is None or fecha_plan < min_future_date:
+                        min_future_date = fecha_plan
+
+        if min_future_date:
+            nombre_dia = get_weekday_in_spanish(min_future_date)
+            fecha_formateada = min_future_date.strftime("%d/%m/%Y")
+            fecha_reporte = f"Fecha: {nombre_dia}, {fecha_formateada}"
+        else:
+            fecha_reporte = "Fecha: No hay hitos próximos"
+
+        final_message += "----------------------------------------\n"
+        final_message += f"{fecha_reporte}\n"
+        final_message += f"<b>Gerencia:</b> {gerencia}\n\n"
+        final_message += f"Total de Solicitudes en Proceso: <b>{total}</b>\n"
+        final_message += f"🟢 A tiempo: <b>{al_dia}</b>\n"
+        final_message += f"🔴 Retrasadas: <b>{atrasadas}</b>\n"
+
+    await query.edit_message_text(final_message, parse_mode=ParseMode.HTML)
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+reporte_handler = ConversationHandler(
+    entry_points=[CommandHandler("reporte", reporte_start)],
+    states={
+        REPORTE_SELECTING_DISTRITO: [CallbackQueryHandler(distrito_callback_reporte)],
+        REPORTE_SELECTING_GERENCIA: [CallbackQueryHandler(gerencia_callback_reporte)],
+        REPORTE_SELECTING_SERVICIO: [CallbackQueryHandler(servicio_callback_reporte)],
     },
     fallbacks=[CommandHandler("cancelar", cancel_filtro)],
 )

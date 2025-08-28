@@ -21,8 +21,9 @@ from bot.handlers import (
     hoy_command,
     balance_filtro_handler,
     listar_solicitudes_handler,
-    # --- NUEVO HANDLER ---
     retrasado_handler,
+    # --- NUEVO HANDLER ---
+    reporte_handler,
 )
 from bot.scheduler import post_init
 
@@ -56,8 +57,9 @@ def main() -> None:
     # Handlers de Conversación
     application.add_handler(balance_filtro_handler)
     application.add_handler(listar_solicitudes_handler)
-    # --- NUEVO HANDLER ---
     application.add_handler(retrasado_handler)
+    # --- NUEVO HANDLER ---
+    application.add_handler(reporte_handler)
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unauthorized)

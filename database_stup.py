@@ -19,11 +19,11 @@ def setup_database():
             solicitud_contratacion TEXT NOT NULL,
             servicio TEXT,
             distrito TEXT,
+            gerencia TEXT, -- NUEVA COLUMNA
             presupuesto_base REAL,
             fecha_solicitud DATE,
             etapa_contratacion TEXT,
             
-            -- NUEVO: Columna para gestionar el estado del proceso
             hito_actual TEXT,
 
             -- Hito: Estrategia de Contratación
@@ -99,7 +99,9 @@ def setup_database():
 
         conn.commit()
         conn.close()
-        print("Base de datos y tablas creadas exitosamente en 'bot_database.db'")
+        print(
+            "Base de datos y tablas creadas/verificadas exitosamente en 'bot_database.db'"
+        )
 
     except sqlite3.Error as e:
         print(f"Error al configurar la base de datos: {e}")
