@@ -612,12 +612,28 @@ async def hoy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "No hay hitos con fecha de vencimiento para hoy."
         )
         return
-    message = "<b>🗓️ Hitos con Vencimiento Hoy</b> 🗓️\n\n"
-    for solicitud in solicitudes:
-        hito_actual = solicitud["hito_actual"]
-        nombre_hito = HITO_NOMBRES_LARGOS.get(hito_actual, hito_actual)
-        message += f"<b>Solicitud ID {solicitud['id']}:</b> {solicitud['solicitud_contratacion']}\n"
-        message += f"   - <b>Hito pendiente:</b> {nombre_hito}\n\n"
+
+    message = "<b>PLAZOS CUMPLIDOS DENTRO DEL PLAN DE CONTRATACIONES Y PROYECTOS DE INVERSIÓN</b>\n"
+    message += "<b>🗓️ Vencimiento Hoy</b> 🗓️\n\n"
+
+    # Agrupar por gerencia
+    hoy_por_gerencia = {}
+    for sol in solicitudes:
+        g = sol.get("gerencia", "Sin Gerencia")
+        if g not in hoy_por_gerencia:
+            hoy_por_gerencia[g] = []
+        hoy_por_gerencia[g].append(sol)
+
+    for gerencia, solicitudes_gerencia in hoy_por_gerencia.items():
+        message += "----------------------------------------\n"
+        message += f"<b>Gerencia:</b> {html.escape(gerencia)}\n\n"
+        for solicitud in solicitudes_gerencia:
+            hito_actual = solicitud["hito_actual"]
+            nombre_hito = HITO_NOMBRES_LARGOS.get(hito_actual, hito_actual)
+            message += f"<b>Responsable:</b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
+            message += f"<b>Solicitud ID {solicitud['id']}:</b> {html.escape(solicitud['solicitud_contratacion'])}\n"
+            message += f"   - <b>Fase pendiente:</b> {html.escape(nombre_hito)}\n\n"
+
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 

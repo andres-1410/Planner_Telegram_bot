@@ -272,20 +272,15 @@ def get_solicitudes_for_today():
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     hoy_str = datetime.now().strftime("%Y-%m-%d")
-    cursor.execute(
-        "SELECT id, solicitud_contratacion, hito_actual FROM solicitudes WHERE hito_actual IS NOT NULL"
-    )
+    # CORRECCIÓN: Seleccionar todos los campos necesarios
+    cursor.execute("SELECT * FROM solicitudes WHERE hito_actual IS NOT NULL")
     solicitudes_activas = cursor.fetchall()
     solicitudes_de_hoy = []
     for solicitud in solicitudes_activas:
         hito_actual = solicitud["hito_actual"]
-        fecha_plan_col = f"fecha_planificada_{hito_actual}"
-        cursor.execute(
-            f"SELECT {fecha_plan_col} FROM solicitudes WHERE id = ?", (solicitud["id"],)
-        )
-        fecha_plan = cursor.fetchone()[0]
+        fecha_plan = solicitud[f"fecha_planificada_{hito_actual}"]
         if fecha_plan == hoy_str:
-            solicitudes_de_hoy.append(solicitud)
+            solicitudes_de_hoy.append(dict(solicitud))
     conn.close()
     return solicitudes_de_hoy
 
