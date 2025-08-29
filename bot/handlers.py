@@ -22,10 +22,11 @@ from .scheduler import check_and_send_notifications
 # Estados para los ConversationHandlers
 SELECTING_DISTRITO, SELECTING_SERVICIO = range(2)
 LIST_SELECTING_DISTRITO, LIST_SELECTING_SERVICIO = range(2, 4)
-RETRASO_SELECTING_DISTRITO, RETRASO_SELECTING_SERVICIO = range(4, 6)
-# --- NUEVOS ESTADOS ---
+RETRASO_SELECTING_DISTRITO, RETRASO_SELECTING_GERENCIA, RETRASO_SELECTING_SERVICIO = (
+    range(4, 7)
+)
 REPORTE_SELECTING_DISTRITO, REPORTE_SELECTING_GERENCIA, REPORTE_SELECTING_SERVICIO = (
-    range(6, 9)
+    range(7, 10)
 )
 
 
@@ -172,6 +173,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/replanificar [ID] [DD/MM/YYYY] - Cambia la fecha del hito actual.\n"
         "/completar [ID] - Marca el hito actual como completado.\n\n"
         "<b>Comandos de Administrador (Rol: admin):</b>\n"
+        "/reporte - Genera un reporte consolidado por gerencia.\n"
         "/cargar_excel - Actualiza los datos desde el archivo Excel.\n"
         "/configurar_dias N - Define los días de antelación.\n"
         "/configurar_hora HH:MM - Define la hora de las alertas.\n"
@@ -282,7 +284,7 @@ async def ver_solicitud_command(
                 elif dias_restantes <= dias_anticipacion:
                     estatus = f"🟡 Próximo (faltan {dias_restantes} día(s))"
                 else:
-                    estatus = f"� A tiempo (faltan {dias_restantes} día(s))"
+                    estatus = f"🟢 A tiempo (faltan {dias_restantes} día(s))"
                 message += f"➡️ <b>{nombre_hito}:</b> Planificado para {format_date_for_display(fecha_plan)} ({estatus})\n"
             else:
                 message += f"⚪️ <b>{nombre_hito}:</b> Pendiente para el {format_date_for_display(fecha_plan)}\n"
@@ -500,6 +502,17 @@ async def hoy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 # --- ConversationHandlers ---
+async def cancel_filtro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Función genérica para cancelar cualquier conversación."""
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("Operación cancelada.")
+    else:
+        await update.message.reply_text("Operación cancelada.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
 async def balance_filtro_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
@@ -573,12 +586,6 @@ async def servicio_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         f"🔴 Retrasadas: <b>{atrasadas}</b>"
     )
     await query.edit_message_text(text=message, parse_mode=ParseMode.HTML)
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
-async def cancel_filtro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Operación de filtrado cancelada.")
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -690,19 +697,13 @@ async def servicio_callback_list(
     return ConversationHandler.END
 
 
-async def cancel_list_filtro(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Operación de listado cancelada.")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
 listar_solicitudes_handler = ConversationHandler(
     entry_points=[CommandHandler("listar_solicitudes", listar_solicitudes_start)],
     states={
         LIST_SELECTING_DISTRITO: [CallbackQueryHandler(distrito_callback_list)],
         LIST_SELECTING_SERVICIO: [CallbackQueryHandler(servicio_callback_list)],
     },
-    fallbacks=[CommandHandler("cancelar", cancel_list_filtro)],
+    fallbacks=[CommandHandler("cancelar", cancel_filtro)],
 )
 
 
@@ -725,7 +726,7 @@ async def retrasado_start(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "<b>Paso 1/2:</b> Selecciona un distrito para ver las solicitudes retrasadas:",
+        "<b>Paso 1/3:</b> Selecciona un distrito para ver las solicitudes retrasadas:",
         reply_markup=reply_markup,
         parse_mode=ParseMode.HTML,
     )
@@ -739,25 +740,55 @@ async def distrito_callback_retraso(
     await query.answer()
     distrito_seleccionado = query.data
     context.user_data["distrito_filtro_retraso"] = distrito_seleccionado
-    servicios = get_unique_column_values(
-        "servicio", distrito=distrito_seleccionado, status="delayed"
+    gerencias = get_unique_column_values(
+        "gerencia", distrito=distrito_seleccionado, status="delayed"
     )
-    if not servicios:
+    if not gerencias:
         await query.edit_message_text(
-            "No hay servicios con solicitudes retrasadas para este distrito."
+            "No hay gerencias con solicitudes retrasadas para este distrito."
         )
         context.user_data.clear()
         return ConversationHandler.END
-    keyboard = [
-        [InlineKeyboardButton(servicio, callback_data=servicio)]
-        for servicio in servicios
-    ]
+    keyboard = [[InlineKeyboardButton(g, callback_data=g)] for g in gerencias]
+    keyboard.insert(
+        0, [InlineKeyboardButton("TODAS LAS GERENCIAS", callback_data="TODOS")]
+    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        f"<b>Paso 2/3:</b> Distrito: <i>{distrito_seleccionado}</i>.\nAhora, selecciona una gerencia:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+    return RETRASO_SELECTING_GERENCIA
+
+
+async def gerencia_callback_retraso(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    await query.answer()
+    gerencia_seleccionada = query.data
+    context.user_data["gerencia_filtro_retraso"] = gerencia_seleccionada
+    distrito_seleccionado = context.user_data.get("distrito_filtro_retraso", "TODOS")
+    servicios = get_unique_column_values(
+        "servicio",
+        distrito=distrito_seleccionado,
+        gerencia=gerencia_seleccionada,
+        status="delayed",
+    )
+    if not servicios:
+        await query.edit_message_text(
+            "No hay servicios con solicitudes retrasadas para esta selección."
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+    keyboard = [[InlineKeyboardButton(s, callback_data=s)] for s in servicios]
     keyboard.insert(
         0, [InlineKeyboardButton("TODOS LOS SERVICIOS", callback_data="TODOS")]
     )
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
-        f"<b>Paso 2/2:</b> Distrito: <i>{distrito_seleccionado}</i>.\nAhora, selecciona un servicio:",
+        f"<b>Paso 3/3:</b> Gerencia: <i>{gerencia_seleccionada}</i>.\nAhora, selecciona un servicio:",
         reply_markup=reply_markup,
         parse_mode=ParseMode.HTML,
     )
@@ -771,13 +802,17 @@ async def servicio_callback_retraso(
     await query.answer()
     servicio_seleccionado = query.data
     distrito_seleccionado = context.user_data.get("distrito_filtro_retraso", "TODOS")
+    gerencia_seleccionada = context.user_data.get("gerencia_filtro_retraso", "TODOS")
+
     await query.edit_message_text(
-        f"Buscando solicitudes retrasadas para:\n<b>Distrito:</b> {distrito_seleccionado}\n<b>Servicio:</b> {servicio_seleccionado}",
+        f"Buscando solicitudes retrasadas para:\n<b>Distrito:</b> {distrito_seleccionado}\n<b>Gerencia:</b> {gerencia_seleccionada}\n<b>Servicio:</b> {servicio_seleccionado}",
         parse_mode=ParseMode.HTML,
     )
 
     solicitudes = get_delayed_solicitudes(
-        distrito=distrito_seleccionado, servicio=servicio_seleccionado
+        distrito=distrito_seleccionado,
+        gerencia=gerencia_seleccionada,
+        servicio=servicio_seleccionado,
     )
 
     if not solicitudes:
@@ -787,21 +822,32 @@ async def servicio_callback_retraso(
         context.user_data.clear()
         return ConversationHandler.END
 
-    message = f"🔴 <b>Lista de Solicitudes Retrasadas ({len(solicitudes)})</b> 🔴\n\n"
-    for solicitud in solicitudes:
-        nombre_hito = HITO_NOMBRES_LARGOS.get(
-            solicitud["hito_actual"], solicitud["hito_actual"]
-        )
-        message += (
-            f"<b>ID {solicitud['id']}:</b> {solicitud['solicitud_contratacion']}\n"
-        )
-        message += f"  - <b>Hito Retrasado:</b> {nombre_hito}\n"
-        message += f"  - <b>Fecha Límite:</b> {format_date_for_display(solicitud['fecha_planificada'])}\n\n"
+    retrasados_por_gerencia = {}
+    for sol in solicitudes:
+        g = sol.get("gerencia", "Sin Gerencia")
+        if g not in retrasados_por_gerencia:
+            retrasados_por_gerencia[g] = []
+        retrasados_por_gerencia[g].append(sol)
+
+    final_message = "<b>PLAZOS VENCIDOS DENTRO DEL PLAN DE CONTRATACIONES Y PROYECTOS DE INVERSIÓN</b>\n\n"
+
+    for gerencia, solicitudes_gerencia in retrasados_por_gerencia.items():
+        final_message += "----------------------------------------\n"
+        final_message += f"<b>Gerencia:</b> {html.escape(gerencia)}\n\n"
+        for solicitud in solicitudes_gerencia:
+            nombre_hito = HITO_NOMBRES_LARGOS.get(
+                solicitud["hito_actual"], solicitud["hito_actual"]
+            )
+            final_message += f"<b>Responsable:</b>\n"
+            final_message += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
+            # CORRECCIÓN: Se añade la fecha límite al reporte
+            final_message += f"<b>Fecha Límite:</b> {format_date_for_display(solicitud['fecha_planificada'])}\n"
+            final_message += f"🔴 <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n\n"
 
     chunk_size = 4096
-    for i in range(0, len(message), chunk_size):
+    for i in range(0, len(final_message), chunk_size):
         await query.message.reply_text(
-            message[i : i + chunk_size], parse_mode=ParseMode.HTML
+            final_message[i : i + chunk_size], parse_mode=ParseMode.HTML
         )
 
     context.user_data.clear()
@@ -812,6 +858,7 @@ retrasado_handler = ConversationHandler(
     entry_points=[CommandHandler("retrasado", retrasado_start)],
     states={
         RETRASO_SELECTING_DISTRITO: [CallbackQueryHandler(distrito_callback_retraso)],
+        RETRASO_SELECTING_GERENCIA: [CallbackQueryHandler(gerencia_callback_retraso)],
         RETRASO_SELECTING_SERVICIO: [CallbackQueryHandler(servicio_callback_retraso)],
     },
     fallbacks=[CommandHandler("cancelar", cancel_filtro)],

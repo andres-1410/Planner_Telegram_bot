@@ -124,7 +124,6 @@ def get_solicitudes_for_balance(distrito=None, gerencia=None, servicio=None):
         query_parts.append(f"WHEN '{hito}' THEN fecha_planificada_{hito}")
     case_statement = "CASE hito_actual " + " ".join(query_parts) + " END"
 
-    # CORRECCIÓN: Ahora también seleccionamos la gerencia
     query = f"SELECT gerencia, ({case_statement}) as fecha_planificada FROM solicitudes WHERE hito_actual IS NOT NULL"
     params = []
 
@@ -291,7 +290,8 @@ def get_solicitudes_for_today():
     return solicitudes_de_hoy
 
 
-def get_delayed_solicitudes(distrito=None, servicio=None):
+def get_delayed_solicitudes(distrito=None, gerencia=None, servicio=None):
+    """Obtiene las solicitudes retrasadas, opcionalmente filtradas."""
     conn = db_connect()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -300,11 +300,15 @@ def get_delayed_solicitudes(distrito=None, servicio=None):
     for hito in HITOS_SECUENCIA:
         query_parts.append(f"WHEN '{hito}' THEN fecha_planificada_{hito}")
     case_statement = "CASE hito_actual " + " ".join(query_parts) + " END"
-    query = f"SELECT id, solicitud_contratacion, hito_actual, ({case_statement}) as fecha_planificada FROM solicitudes WHERE hito_actual IS NOT NULL AND ({case_statement}) < ?"
+    # CORRECCIÓN: Se añade 'gerencia' a la consulta
+    query = f"SELECT id, solicitud_contratacion, gerencia, hito_actual, ({case_statement}) as fecha_planificada FROM solicitudes WHERE hito_actual IS NOT NULL AND ({case_statement}) < ?"
     params = [hoy_str]
     if distrito and distrito != "TODOS":
         query += " AND distrito = ?"
         params.append(distrito)
+    if gerencia and gerencia != "TODOS":
+        query += " AND gerencia = ?"
+        params.append(gerencia)
     if servicio and servicio != "TODOS":
         query += " AND servicio = ?"
         params.append(servicio)
