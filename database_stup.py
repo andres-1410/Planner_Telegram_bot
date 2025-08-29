@@ -15,48 +15,55 @@ def setup_database():
         cursor.execute(
             """
         CREATE TABLE IF NOT EXISTS solicitudes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY, -- Ya no es autoincremental, se basa en el Excel
             solicitud_contratacion TEXT NOT NULL,
             servicio TEXT,
             distrito TEXT,
-            gerencia TEXT, -- NUEVA COLUMNA
+            gerencia TEXT,
+            responsable TEXT, -- NUEVA COLUMNA
             presupuesto_base REAL,
             fecha_solicitud DATE,
             etapa_contratacion TEXT,
-            
             hito_actual TEXT,
 
-            -- Hito: Estrategia de Contratación
+            -- Hito: Presupuesto Base (NUEVO)
+            fecha_planificada_presupuesto_base DATE,
+            fecha_real_presupuesto_base DATE,
+            posposiciones_presupuesto_base INTEGER DEFAULT 0,
+            historial_fechas_presupuesto_base TEXT,
+
+            -- Hito: Fecha de Solicitud (NUEVO)
+            fecha_planificada_fecha_solicitud DATE,
+            fecha_real_fecha_solicitud DATE,
+            posposiciones_fecha_solicitud INTEGER DEFAULT 0,
+            historial_fechas_fecha_solicitud TEXT,
+
+            -- Hitos existentes
             fecha_planificada_estrategia DATE,
             fecha_real_estrategia DATE,
             posposiciones_estrategia INTEGER DEFAULT 0,
             historial_fechas_estrategia TEXT,
             
-            -- Hito: Acta de Inicio
             fecha_planificada_inicio DATE,
             fecha_real_inicio DATE,
             posposiciones_inicio INTEGER DEFAULT 0,
             historial_fechas_inicio TEXT,
             
-            -- Hito: Decisión de Inicio
             fecha_planificada_decision DATE,
             fecha_real_decision DATE,
             posposiciones_decision INTEGER DEFAULT 0,
             historial_fechas_decision TEXT,
             
-            -- Hito: Acta de Decisión de Otorgamiento
             fecha_planificada_acta_otorgamiento DATE,
             fecha_real_acta_otorgamiento DATE,
             posposiciones_acta_otorgamiento INTEGER DEFAULT 0,
             historial_fechas_acta_otorgamiento TEXT,
             
-            -- Hito: Notificación de Otorgamiento
             fecha_planificada_notif_otorgamiento DATE,
             fecha_real_notif_otorgamiento DATE,
             posposiciones_notif_otorgamiento INTEGER DEFAULT 0,
             historial_fechas_notif_otorgamiento TEXT,
 
-            -- Hito: Contrato
             fecha_planificada_contrato DATE,
             fecha_real_contrato DATE,
             posposiciones_contrato INTEGER DEFAULT 0,

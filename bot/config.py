@@ -16,6 +16,8 @@ TIMEZONE = "America/Caracas"  # Asegúrate de que esta sea tu zona horaria
 
 # --- Constantes de Hitos (Movidas aquí para evitar importación circular) ---
 HITOS_SECUENCIA = [
+    "presupuesto_base",
+    "fecha_solicitud",
     "estrategia",
     "inicio",
     "decision",
@@ -25,6 +27,8 @@ HITOS_SECUENCIA = [
 ]
 
 HITO_NOMBRES_LARGOS = {
+    "presupuesto_base": "Presupuesto Base",
+    "fecha_solicitud": "Fecha de Solicitud",
     "estrategia": "Estrategia de Contratación",
     "inicio": "Acta de Inicio - Solicitud A",
     "decision": "Decisión de Inicio",

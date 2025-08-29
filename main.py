@@ -22,8 +22,9 @@ from bot.handlers import (
     balance_filtro_handler,
     listar_solicitudes_handler,
     retrasado_handler,
-    # --- NUEVO HANDLER ---
     reporte_handler,
+    # --- NUEVO HANDLER ---
+    unidad_usuaria_handler,
 )
 from bot.scheduler import post_init
 
@@ -58,8 +59,9 @@ def main() -> None:
     application.add_handler(balance_filtro_handler)
     application.add_handler(listar_solicitudes_handler)
     application.add_handler(retrasado_handler)
-    # --- NUEVO HANDLER ---
     application.add_handler(reporte_handler)
+    # --- NUEVO HANDLER ---
+    application.add_handler(unidad_usuaria_handler)
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unauthorized)

@@ -28,6 +28,10 @@ RETRASO_SELECTING_DISTRITO, RETRASO_SELECTING_GERENCIA, RETRASO_SELECTING_SERVIC
 REPORTE_SELECTING_DISTRITO, REPORTE_SELECTING_GERENCIA, REPORTE_SELECTING_SERVICIO = (
     range(7, 10)
 )
+# --- NUEVOS ESTADOS ---
+UNIDAD_SELECTING_DISTRITO, UNIDAD_SELECTING_GERENCIA, UNIDAD_SELECTING_SERVICIO = range(
+    10, 13
+)
 
 
 # --- Funciones de Utilidad ---
@@ -174,7 +178,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/completar [ID] - Marca el hito actual como completado.\n\n"
         "<b>Comandos de Administrador (Rol: admin):</b>\n"
         "/reporte - Genera un reporte consolidado por gerencia.\n"
-        "/cargar_excel - Actualiza los datos desde el archivo Excel.\n"
+        "/cargar_excel - Sincroniza datos descriptivos desde el Excel.\n"
+        "/sincerar_datos - Borra y recarga todas las solicitudes desde el Excel.\n"
         "/configurar_dias N - Define los días de antelación.\n"
         "/configurar_hora HH:MM - Define la hora de las alertas.\n"
         "/listar_usuarios - Muestra todos los usuarios registrados.\n"
@@ -196,7 +201,7 @@ async def cargar_excel_local(
         )
         return
     await update.message.reply_text(
-        f"Archivo {file_path} encontrado. Actualizando datos..."
+        f"Archivo {file_path} encontrado. Sincronizando datos descriptivos..."
     )
     try:
         df = pd.read_excel(file_path).fillna("")
@@ -205,38 +210,136 @@ async def cargar_excel_local(
 
         column_mapping = {
             "N": "id",
+            "SOLICITUD DE CONTRATACIÓN": "solicitud_contratacion",
+            "SERVICIO": "servicio",
+            "DISTRITO": "distrito",
             "GERENCIA": "gerencia",
+            "RESPONSABLE": "responsable",
+            "ETAPA DE CONTRATACIÓN": "etapa_contratacion",
         }
         df_renamed = df.rename(columns=column_mapping)
-
-        if "id" not in df_renamed.columns or "gerencia" not in df_renamed.columns:
-            await update.message.reply_text(
-                "❌ Error: El archivo Excel debe contener las columnas 'N' y 'GERENCIA'."
-            )
-            return
 
         updated_count = 0
         for index, row in df_renamed.iterrows():
             solicitud_id = row.get("id")
-            gerencia = row.get("gerencia")
+            if pd.isna(solicitud_id):
+                continue
+            solicitud_id = int(solicitud_id)
 
-            if pd.notna(solicitud_id) and pd.notna(gerencia):
-                cursor.execute(
-                    "UPDATE solicitudes SET gerencia = ? WHERE id = ?",
-                    (str(gerencia), int(solicitud_id)),
-                )
+            data = {
+                "id": solicitud_id,
+                "solicitud_contratacion": row.get("solicitud_contratacion"),
+                "servicio": row.get("servicio"),
+                "distrito": row.get("distrito"),
+                "gerencia": row.get("gerencia"),
+                "responsable": row.get("responsable"),
+                "etapa_contratacion": row.get("etapa_contratacion"),
+            }
+
+            if solicitud_exists(solicitud_id):
+                update_solicitud_from_excel(cursor, data)
                 if cursor.rowcount > 0:
                     updated_count += 1
 
         conn.commit()
         conn.close()
         await update.message.reply_text(
-            f"✅ ¡Éxito! Se han actualizado {updated_count} solicitudes con la nueva información de gerencia."
+            f"✅ ¡Sincronización completada! Se han actualizado los datos descriptivos de {updated_count} solicitudes."
         )
     except Exception as e:
         logger.error(f"Error al procesar el archivo Excel local: {e}")
         await update.message.reply_text(
             f"❌ Ocurrió un error al procesar el archivo: {e}"
+        )
+
+
+async def sincerar_datos_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if get_user_role(update.effective_user.id) != "admin":
+        await update.message.reply_text("No tienes permiso para ejecutar este comando.")
+        return
+    file_path = NOMBRE_ARCHIVO_EXCEL
+    if not os.path.exists(file_path):
+        await update.message.reply_text(
+            f"❌ Error: No se encontró el archivo {file_path}."
+        )
+        return
+    await update.message.reply_text(
+        f"⚠️ **ADVERTENCIA:** Este comando borrará todas las solicitudes existentes y las recargará desde cero. El progreso de los hitos se reiniciará según el Excel. Los usuarios no serán eliminados.\n\nProcesando archivo {file_path}...",
+        parse_mode=ParseMode.HTML,
+    )
+    try:
+        df = pd.read_excel(file_path).fillna("")
+        conn = db_connect()
+        cursor = conn.cursor()
+
+        cursor.execute("DELETE FROM solicitudes")
+
+        column_mapping = {
+            "N": "id",
+            "SOLICITUD DE CONTRATACIÓN": "solicitud_contratacion",
+            "SERVICIO": "servicio",
+            "DISTRITO": "distrito",
+            "GERENCIA": "gerencia",
+            "RESPONSABLE": "responsable",
+            "ETAPA DE CONTRATACIÓN": "etapa_contratacion",
+            "PRESUPUESTO BASE": "fecha_planificada_presupuesto_base",
+            "FECHA DE SOLICITUD": "fecha_planificada_fecha_solicitud",
+            "ESTRATEGIA DE CONTRATACIÓN": "fecha_planificada_estrategia",
+            "ACTA DE INICIO - SOLICITUD A": "fecha_planificada_inicio",
+            "DECISIÓN DE INICIO": "fecha_planificada_decision",
+            "ACTA DE DECISIÓN DE OTORGAMIENTO": "fecha_planificada_acta_otorgamiento",
+            "NOTIFICACIÓN DE OTORGAMIENTO": "fecha_planificada_notif_otorgamiento",
+            "CONTRATO": "fecha_planificada_contrato",
+        }
+        df_renamed = df.rename(columns=column_mapping)
+
+        inserted_count = 0
+        for index, row in df_renamed.iterrows():
+            solicitud_id = row.get("id")
+            if pd.isna(solicitud_id):
+                continue
+            solicitud_id = int(solicitud_id)
+
+            data = {
+                "id": solicitud_id,
+                "solicitud_contratacion": row.get("solicitud_contratacion"),
+                "servicio": row.get("servicio"),
+                "distrito": row.get("distrito"),
+                "gerencia": row.get("gerencia"),
+                "responsable": row.get("responsable"),
+                "presupuesto_base_original": row.get("PRESUPUESTO BASE"),
+                "fecha_solicitud_original": row.get("FECHA DE SOLICITUD"),
+                "etapa_contratacion": row.get("etapa_contratacion"),
+            }
+
+            hito_actual = None
+            for hito_key in HITOS_SECUENCIA:
+                excel_val = row.get(f"fecha_planificada_{hito_key}")
+                if str(excel_val).strip() == "-":
+                    # CORRECCIÓN: Se guarda '-' como marcador, no una fecha real.
+                    data[f"fecha_real_{hito_key}"] = "-"
+                    data[f"fecha_planificada_{hito_key}"] = None
+                else:
+                    fecha_plan = safe_date_convert(excel_val)
+                    data[f"fecha_planificada_{hito_key}"] = fecha_plan
+                    data[f"fecha_real_{hito_key}"] = None
+                    if fecha_plan and not hito_actual:
+                        hito_actual = hito_key
+            data["hito_actual"] = hito_actual
+            insert_solicitud_from_excel(cursor, data)
+            inserted_count += 1
+
+        conn.commit()
+        conn.close()
+        await update.message.reply_text(
+            f"✅ ¡Sinceramiento completado! Se han cargado {inserted_count} solicitudes desde cero."
+        )
+    except Exception as e:
+        logger.error(f"Error al sincerar los datos: {e}")
+        await update.message.reply_text(
+            f"❌ Ocurrió un error al sincerar los datos: {e}"
         )
 
 
@@ -258,21 +361,25 @@ async def ver_solicitud_command(
         )
         return
     message = f"<b>Detalles de la Solicitud ID: {solicitud['id']}</b>\n"
-    message += f"<b>Nombre:</b> {solicitud['solicitud_contratacion']}\n"
-    message += f"<b>Gerencia:</b> {solicitud['gerencia'] or 'No especificada'}\n"
-    message += f"<b>Etapa (Manual):</b> {solicitud['etapa_contratacion'] or 'No especificada'}\n"
+    message += f"<b>Nombre:</b> {html.escape(solicitud['solicitud_contratacion'])}\n"
+    message += (
+        f"<b>Gerencia:</b> {html.escape(solicitud['gerencia'] or 'No especificada')}\n"
+    )
+    message += f"<b>Responsable:</b> {html.escape(solicitud['responsable'] or 'No especificado')}\n"
+
     hito_actual_key = solicitud["hito_actual"]
     if hito_actual_key:
         nombre_largo = HITO_NOMBRES_LARGOS.get(hito_actual_key, hito_actual_key)
-        message += f"<b>Próximo Hito:</b> {nombre_largo}\n\n"
+        message += f"<b>Etapa:</b> {html.escape(nombre_largo)}\n\n"
     else:
         message += "<b>Estatus General:</b> 🎉 ¡Completado! 🎉\n\n"
+
     for hito_key in HITOS_SECUENCIA:
         nombre_hito = HITO_NOMBRES_LARGOS.get(hito_key, hito_key)
         fecha_plan = solicitud[f"fecha_planificada_{hito_key}"]
         fecha_real = solicitud[f"fecha_real_{hito_key}"]
         if fecha_real:
-            message += f"✅ <b>{nombre_hito}:</b> Completado el {format_date_for_display(fecha_real)}\n"
+            message += f"✅ <b>{html.escape(nombre_hito)}:</b> Completado el {format_date_for_display(fecha_real)}\n"
         elif fecha_plan:
             if hito_key == hito_actual_key:
                 fecha_plan_dt = datetime.strptime(fecha_plan, "%Y-%m-%d")
@@ -285,11 +392,11 @@ async def ver_solicitud_command(
                     estatus = f"🟡 Próximo (faltan {dias_restantes} día(s))"
                 else:
                     estatus = f"🟢 A tiempo (faltan {dias_restantes} día(s))"
-                message += f"➡️ <b>{nombre_hito}:</b> Planificado para {format_date_for_display(fecha_plan)} ({estatus})\n"
+                message += f"➡️ <b>{html.escape(nombre_hito)}:</b> Planificado para {format_date_for_display(fecha_plan)} ({estatus})\n"
             else:
-                message += f"⚪️ <b>{nombre_hito}:</b> Pendiente para el {format_date_for_display(fecha_plan)}\n"
+                message += f"⚪️ <b>{html.escape(nombre_hito)}:</b> Pendiente para el {format_date_for_display(fecha_plan)}\n"
         else:
-            message += f"⚪️ <b>{nombre_hito}:</b> Sin fecha planificada\n"
+            message += f"⚪️ <b>{html.escape(nombre_hito)}:</b> Sin fecha planificada\n"
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
 
@@ -443,6 +550,19 @@ async def completar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         solicitud_id = int(context.args[0])
         hito_completado, nuevo_hito = completar_hito_actual(solicitud_id)
         if hito_completado:
+            if hito_completado == "fecha_solicitud":
+                conn = db_connect()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE solicitudes SET responsable = 'GERENCIA DE CONTRATACIONES' WHERE id = ?",
+                    (solicitud_id,),
+                )
+                conn.commit()
+                conn.close()
+                await update.message.reply_text(
+                    "ℹ️ El responsable de esta solicitud ha sido actualizado a 'GERENCIA DE CONTRATACIONES'."
+                )
+
             nombre_largo_completado = HITO_NOMBRES_LARGOS.get(
                 hito_completado, hito_completado
             )
@@ -838,11 +958,14 @@ async def servicio_callback_retraso(
             nombre_hito = HITO_NOMBRES_LARGOS.get(
                 solicitud["hito_actual"], solicitud["hito_actual"]
             )
-            final_message += f"<b>Responsable:</b>\n"
+            responsable = solicitud.get("responsable", "No especificado")
+            fecha_limite = format_date_for_display(solicitud["fecha_planificada"])
+            solicitud_nombre = solicitud["solicitud_contratacion"]
+
+            final_message += f"<b>Responsable:</b> {html.escape(responsable)}\n"
             final_message += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
-            # CORRECCIÓN: Se añade la fecha límite al reporte
-            final_message += f"<b>Fecha Límite:</b> {format_date_for_display(solicitud['fecha_planificada'])}\n"
-            final_message += f"🔴 <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n\n"
+            final_message += f"<b>Fecha Límite:</b> {fecha_limite}\n"
+            final_message += f"🔴 <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud_nombre)}\n\n"
 
     chunk_size = 4096
     for i in range(0, len(final_message), chunk_size):
@@ -1023,6 +1146,165 @@ reporte_handler = ConversationHandler(
         REPORTE_SELECTING_DISTRITO: [CallbackQueryHandler(distrito_callback_reporte)],
         REPORTE_SELECTING_GERENCIA: [CallbackQueryHandler(gerencia_callback_reporte)],
         REPORTE_SELECTING_SERVICIO: [CallbackQueryHandler(servicio_callback_reporte)],
+    },
+    fallbacks=[CommandHandler("cancelar", cancel_filtro)],
+)
+
+
+# --- NUEVO ConversationHandler para /unidad_usuaria ---
+async def unidad_usuaria_start(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    if get_user_status(update.effective_user.id) != "autorizado":
+        await handle_unauthorized(update, context)
+        return ConversationHandler.END
+
+    distritos = get_unique_column_values("distrito")
+    if not distritos:
+        await update.message.reply_text("No hay distritos disponibles para filtrar.")
+        return ConversationHandler.END
+
+    keyboard = [
+        [InlineKeyboardButton(distrito, callback_data=distrito)]
+        for distrito in distritos
+    ]
+    keyboard.insert(
+        0, [InlineKeyboardButton("TODOS LOS DISTRITOS", callback_data="TODOS")]
+    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "<b>Paso 1/3:</b> Selecciona un distrito:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+    return UNIDAD_SELECTING_DISTRITO
+
+
+async def distrito_callback_unidad(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    await query.answer()
+    distrito = query.data
+    context.user_data["unidad_distrito"] = distrito
+
+    gerencias = get_unique_column_values("gerencia", distrito=distrito)
+    if not gerencias:
+        await query.edit_message_text(
+            "No hay gerencias disponibles para este distrito."
+        )
+        return ConversationHandler.END
+
+    keyboard = [[InlineKeyboardButton(g, callback_data=g)] for g in gerencias]
+    keyboard.insert(
+        0, [InlineKeyboardButton("TODAS LAS GERENCIAS", callback_data="TODOS")]
+    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        f"<b>Paso 2/3:</b> Selecciona una gerencia:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+    return UNIDAD_SELECTING_GERENCIA
+
+
+async def gerencia_callback_unidad(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    await query.answer()
+    gerencia = query.data
+    context.user_data["unidad_gerencia"] = gerencia
+    distrito = context.user_data["unidad_distrito"]
+
+    servicios = get_unique_column_values(
+        "servicio", distrito=distrito, gerencia=gerencia
+    )
+    if not servicios:
+        await query.edit_message_text(
+            "No hay servicios disponibles para esta selección."
+        )
+        return ConversationHandler.END
+
+    keyboard = [[InlineKeyboardButton(s, callback_data=s)] for s in servicios]
+    keyboard.insert(
+        0, [InlineKeyboardButton("TODOS LOS SERVICIOS", callback_data="TODOS")]
+    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        f"<b>Paso 3/3:</b> Selecciona un servicio:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML,
+    )
+    return UNIDAD_SELECTING_SERVICIO
+
+
+async def servicio_callback_unidad(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    query = update.callback_query
+    await query.answer()
+    servicio = query.data
+    distrito = context.user_data.get("unidad_distrito", "TODOS")
+    gerencia = context.user_data.get("unidad_gerencia", "TODOS")
+
+    await query.edit_message_text("Generando reporte de Unidades Usuarias...")
+
+    solicitudes = get_solicitudes_unidad_usuaria(
+        distrito=distrito, gerencia=gerencia, servicio=servicio
+    )
+
+    if not solicitudes:
+        await query.message.reply_text(
+            "No se encontraron solicitudes que cumplan con la condición de Unidad Usuaria para los filtros seleccionados."
+        )
+        return ConversationHandler.END
+
+    final_message = "<b>PLAZOS CUMPLIDOS DENTRO DEL PLAN DE CONTRATACIONES Y PROYECTOS DE INVERSIÓN</b>\n\n"
+
+    for solicitud in solicitudes:
+        final_message += "----------------------------------------\n"
+        final_message += f"<b>Gerencia:</b> {html.escape(solicitud['gerencia'])}\n\n"
+        final_message += f"<b>Responsable:</b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
+
+        hito_actual = solicitud.get("hito_actual")
+        if hito_actual:
+            nombre_hito = HITO_NOMBRES_LARGOS.get(hito_actual, hito_actual)
+            fecha_plan = solicitud.get(f"fecha_planificada_{hito_actual}")
+            fecha_plan_dt = datetime.strptime(fecha_plan, "%Y-%m-%d").date()
+            hoy = datetime.now().date()
+            dias_restantes = (fecha_plan_dt - hoy).days
+
+            if dias_restantes < 0:
+                estatus_simbolo = "🔴"
+            else:
+                estatus_simbolo = "🟢"
+
+            final_message += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
+            final_message += (
+                f"<b>Fecha Límite:</b> {format_date_for_display(fecha_plan)}\n"
+            )
+            final_message += f"{estatus_simbolo} <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n\n"
+        else:
+            final_message += f"🎉 <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])} (Completada)\n\n"
+
+    # Enviar en bloques
+    chunk_size = 4096
+    for i in range(0, len(final_message), chunk_size):
+        await query.message.reply_text(
+            final_message[i : i + chunk_size], parse_mode=ParseMode.HTML
+        )
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+unidad_usuaria_handler = ConversationHandler(
+    entry_points=[CommandHandler("unidad_usuaria", unidad_usuaria_start)],
+    states={
+        UNIDAD_SELECTING_DISTRITO: [CallbackQueryHandler(distrito_callback_unidad)],
+        UNIDAD_SELECTING_GERENCIA: [CallbackQueryHandler(gerencia_callback_unidad)],
+        UNIDAD_SELECTING_SERVICIO: [CallbackQueryHandler(servicio_callback_unidad)],
     },
     fallbacks=[CommandHandler("cancelar", cancel_filtro)],
 )
