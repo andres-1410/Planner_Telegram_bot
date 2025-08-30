@@ -10,6 +10,7 @@ from bot.handlers import (
     help_command,
     handle_unauthorized,
     cargar_excel_local,
+    sincerar_datos_command,
     configurar_dias_command,
     configurar_hora_command,
     autorizar_command,
@@ -19,12 +20,13 @@ from bot.handlers import (
     completar_command,
     balance_command,
     hoy_command,
-    sincerar_datos_command,
+    reporte_dia_pendiente_command,
+    # --- NUEVO COMANDO ---
+    unidad_usuaria_dia_command,
     balance_filtro_handler,
     listar_solicitudes_handler,
     retrasado_handler,
     reporte_handler,
-    # --- NUEVO HANDLER ---
     unidad_usuaria_handler,
 )
 from bot.scheduler import post_init
@@ -46,6 +48,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cargar_excel", cargar_excel_local))
+    application.add_handler(CommandHandler("sincerar_datos", sincerar_datos_command))
     application.add_handler(CommandHandler("configurar_dias", configurar_dias_command))
     application.add_handler(CommandHandler("configurar_hora", configurar_hora_command))
     application.add_handler(CommandHandler("autorizar", autorizar_command))
@@ -55,13 +58,19 @@ def main() -> None:
     application.add_handler(CommandHandler("completar", completar_command))
     application.add_handler(CommandHandler("balance", balance_command))
     application.add_handler(CommandHandler("hoy", hoy_command))
-    application.add_handler(CommandHandler("sincerar_datos", sincerar_datos_command))
+    application.add_handler(
+        CommandHandler("reporte_dia_pendiente", reporte_dia_pendiente_command)
+    )
+    # --- NUEVO COMANDO ---
+    application.add_handler(
+        CommandHandler("unidad_usuaria_dia", unidad_usuaria_dia_command)
+    )
+
     # Handlers de Conversación
     application.add_handler(balance_filtro_handler)
     application.add_handler(listar_solicitudes_handler)
     application.add_handler(retrasado_handler)
     application.add_handler(reporte_handler)
-    # --- NUEVO HANDLER ---
     application.add_handler(unidad_usuaria_handler)
 
     application.add_handler(

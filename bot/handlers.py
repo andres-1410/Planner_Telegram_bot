@@ -28,7 +28,6 @@ RETRASO_SELECTING_DISTRITO, RETRASO_SELECTING_GERENCIA, RETRASO_SELECTING_SERVIC
 REPORTE_SELECTING_DISTRITO, REPORTE_SELECTING_GERENCIA, REPORTE_SELECTING_SERVICIO = (
     range(7, 10)
 )
-# --- NUEVOS ESTADOS ---
 UNIDAD_SELECTING_DISTRITO, UNIDAD_SELECTING_GERENCIA, UNIDAD_SELECTING_SERVICIO = range(
     10, 13
 )
@@ -47,6 +46,8 @@ def safe_date_convert(date_value):
 
 def format_date_for_display(date_str_db):
     """Convierte una fecha de formato YYYY-MM-DD a DD/MM/YYYY para mostrar al usuario."""
+    if date_str_db == "-":
+        return "(Fecha no registrada)"
     if not date_str_db:
         return "No especificada"
     try:
@@ -172,7 +173,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/balance - Muestra un resumen del estado de todas las solicitudes.\n"
         "/balance_filtro - Muestra un resumen filtrado por distrito y servicio.\n"
         "/listar_solicitudes - Inicia un listado filtrado de solicitudes.\n"
-        "/ver_solicitud [ID] - Muestra el detalle de una solicitud.\n\n"
+        "/ver_solicitud [ID] - Muestra el detalle de una solicitud.\n"
+        "/unidad_usuaria - Lista solicitudes donde la gerencia es la responsable.\n"
+        "/reporte_dia_pendiente - Reporte de solicitudes pendientes por día.\n"
+        "/unidad_usuaria_dia - Reporte de Unidades Usuarias por día.\n\n"
         "<b>Comandos de Gestión (Rol: contrataciones o admin):</b>\n"
         "/replanificar [ID] [DD/MM/YYYY] - Cambia la fecha del hito actual.\n"
         "/completar [ID] - Marca el hito actual como completado.\n\n"
@@ -220,6 +224,8 @@ async def cargar_excel_local(
         df_renamed = df.rename(columns=column_mapping)
 
         updated_count = 0
+        inserted_count = 0
+
         for index, row in df_renamed.iterrows():
             solicitud_id = row.get("id")
             if pd.isna(solicitud_id):
@@ -236,15 +242,35 @@ async def cargar_excel_local(
                 "etapa_contratacion": row.get("etapa_contratacion"),
             }
 
-            if solicitud_exists(solicitud_id):
-                update_solicitud_from_excel(cursor, data)
+            if solicitud_exists(cursor, solicitud_id):
+                update_solicitud_info_from_excel(cursor, data)
                 if cursor.rowcount > 0:
                     updated_count += 1
+            else:
+                for hito_key in HITOS_SECUENCIA:
+                    col_name = HITO_NOMBRES_LARGOS[hito_key]
+                    data[f"fecha_planificada_{hito_key}"] = row.get(col_name)
+
+                hito_actual = None
+                for hito_key in HITOS_SECUENCIA:
+                    excel_val = data.get(f"fecha_planificada_{hito_key}")
+                    if str(excel_val).strip() == "-":
+                        data[f"fecha_real_{hito_key}"] = "-"
+                        data[f"fecha_planificada_{hito_key}"] = None
+                    else:
+                        fecha_plan = safe_date_convert(excel_val)
+                        data[f"fecha_planificada_{hito_key}"] = fecha_plan
+                        data[f"fecha_real_{hito_key}"] = None
+                        if fecha_plan and not hito_actual:
+                            hito_actual = hito_key
+                data["hito_actual"] = hito_actual
+                insert_solicitud_from_excel(cursor, data)
+                inserted_count += 1
 
         conn.commit()
         conn.close()
         await update.message.reply_text(
-            f"✅ ¡Sincronización completada! Se han actualizado los datos descriptivos de {updated_count} solicitudes."
+            f"✅ ¡Sincronización completada!\n- {inserted_count} solicitudes nuevas añadidas.\n- {updated_count} solicitudes existentes actualizadas."
         )
     except Exception as e:
         logger.error(f"Error al procesar el archivo Excel local: {e}")
@@ -266,7 +292,7 @@ async def sincerar_datos_command(
         )
         return
     await update.message.reply_text(
-        f"⚠️ **ADVERTENCIA:** Este comando borrará todas las solicitudes existentes y las recargará desde cero. El progreso de los hitos se reiniciará según el Excel. Los usuarios no serán eliminados.\n\nProcesando archivo {file_path}...",
+        f"⚠️ <b>ADVERTENCIA:</b> Este comando borrará todas las solicitudes existentes y las recargará desde cero. El progreso de los hitos se reiniciará según el Excel. Los usuarios no serán eliminados.\n\nProcesando archivo {file_path}...",
         parse_mode=ParseMode.HTML,
     )
     try:
@@ -284,14 +310,20 @@ async def sincerar_datos_command(
             "GERENCIA": "gerencia",
             "RESPONSABLE": "responsable",
             "ETAPA DE CONTRATACIÓN": "etapa_contratacion",
-            "PRESUPUESTO BASE": "fecha_planificada_presupuesto_base",
-            "FECHA DE SOLICITUD": "fecha_planificada_fecha_solicitud",
-            "ESTRATEGIA DE CONTRATACIÓN": "fecha_planificada_estrategia",
-            "ACTA DE INICIO - SOLICITUD A": "fecha_planificada_inicio",
-            "DECISIÓN DE INICIO": "fecha_planificada_decision",
-            "ACTA DE DECISIÓN DE OTORGAMIENTO": "fecha_planificada_acta_otorgamiento",
-            "NOTIFICACIÓN DE OTORGAMIENTO": "fecha_planificada_notif_otorgamiento",
-            "CONTRATO": "fecha_planificada_contrato",
+            HITO_NOMBRES_LARGOS[
+                "presupuesto_base"
+            ]: "fecha_planificada_presupuesto_base",
+            HITO_NOMBRES_LARGOS["fecha_solicitud"]: "fecha_planificada_fecha_solicitud",
+            HITO_NOMBRES_LARGOS["estrategia"]: "fecha_planificada_estrategia",
+            HITO_NOMBRES_LARGOS["inicio"]: "fecha_planificada_inicio",
+            HITO_NOMBRES_LARGOS["decision"]: "fecha_planificada_decision",
+            HITO_NOMBRES_LARGOS[
+                "acta_otorgamiento"
+            ]: "fecha_planificada_acta_otorgamiento",
+            HITO_NOMBRES_LARGOS[
+                "notif_otorgamiento"
+            ]: "fecha_planificada_notif_otorgamiento",
+            HITO_NOMBRES_LARGOS["contrato"]: "fecha_planificada_contrato",
         }
         df_renamed = df.rename(columns=column_mapping)
 
@@ -309,8 +341,6 @@ async def sincerar_datos_command(
                 "distrito": row.get("distrito"),
                 "gerencia": row.get("gerencia"),
                 "responsable": row.get("responsable"),
-                "presupuesto_base_original": row.get("PRESUPUESTO BASE"),
-                "fecha_solicitud_original": row.get("FECHA DE SOLICITUD"),
                 "etapa_contratacion": row.get("etapa_contratacion"),
             }
 
@@ -318,7 +348,6 @@ async def sincerar_datos_command(
             for hito_key in HITOS_SECUENCIA:
                 excel_val = row.get(f"fecha_planificada_{hito_key}")
                 if str(excel_val).strip() == "-":
-                    # CORRECCIÓN: Se guarda '-' como marcador, no una fecha real.
                     data[f"fecha_real_{hito_key}"] = "-"
                     data[f"fecha_planificada_{hito_key}"] = None
                 else:
@@ -980,7 +1009,7 @@ async def servicio_callback_retraso(
 
             final_message += f"<b>Responsable:</b> {html.escape(responsable)}\n"
             final_message += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
-            final_message += f"<b>Fecha Límite:</b> {fecha_limite}\n"
+            final_message += f"<b>Fecha Límite:</b> {html.escape(fecha_limite)}\n"
             final_message += f"🔴 <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud_nombre)}\n\n"
 
     chunk_size = 4096
@@ -1324,3 +1353,121 @@ unidad_usuaria_handler = ConversationHandler(
     },
     fallbacks=[CommandHandler("cancelar", cancel_filtro)],
 )
+
+
+# --- NUEVO COMANDO ---
+async def reporte_dia_pendiente_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if get_user_status(update.effective_user.id) != "autorizado":
+        await handle_unauthorized(update, context)
+        return
+
+    await update.message.reply_text("Generando reporte de pendientes por día...")
+
+    solicitudes = get_solicitudes_pendientes_por_dia()
+
+    if not solicitudes:
+        await update.message.reply_text(
+            "¡Buenas noticias! No se encontraron solicitudes con hitos pendientes."
+        )
+        return
+
+    pendientes_por_fecha = {}
+    for sol in solicitudes:
+        fecha = sol.get("fecha_planificada")
+        if fecha:
+            if fecha not in pendientes_por_fecha:
+                pendientes_por_fecha[fecha] = []
+            pendientes_por_fecha[fecha].append(sol)
+
+    hoy = datetime.now().date()
+
+    for fecha_str in sorted(pendientes_por_fecha.keys()):
+
+        message_for_this_date = "<b>PLAZOS CUMPLIDOS DENTRO DEL PLAN DE CONTRATACIONES Y PROYECTOS DE INVERSIÓN</b>\n\n"
+
+        fecha_obj = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+        nombre_dia = get_weekday_in_spanish(fecha_obj)
+        fecha_display = fecha_obj.strftime("%d/%m/%Y")
+
+        message_for_this_date += (
+            f"<b>Fecha Límite: {nombre_dia}, {fecha_display}</b>\n\n"
+        )
+
+        for solicitud in pendientes_por_fecha[fecha_str]:
+            nombre_hito = HITO_NOMBRES_LARGOS.get(
+                solicitud["hito_actual"], solicitud["hito_actual"]
+            )
+            dias_restantes = (fecha_obj - hoy).days
+            estatus_simbolo = "🔴" if dias_restantes < 0 else "🟢"
+
+            message_for_this_date += f"<b>GERENCIA:  </b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
+            message_for_this_date += f"<b>RESPONSABLE DE ENTREGA:  </b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
+            message_for_this_date += f"<b>FASE:  </b> {html.escape(nombre_hito)}\n"
+            message_for_this_date += f"{estatus_simbolo} <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n"
+            message_for_this_date += "----------------------------------------\n\n"
+
+        # Enviar un mensaje por cada día
+        await update.message.reply_text(
+            message_for_this_date, parse_mode=ParseMode.HTML
+        )
+
+
+# --- NUEVO COMANDO ---
+async def unidad_usuaria_dia_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if get_user_status(update.effective_user.id) != "autorizado":
+        await handle_unauthorized(update, context)
+        return
+
+    await update.message.reply_text("Generando reporte de Unidades Usuarias por día...")
+
+    solicitudes = get_solicitudes_unidad_usuaria_pendientes_por_dia()
+
+    if not solicitudes:
+        await update.message.reply_text(
+            "No se encontraron solicitudes de Unidad Usuaria con hitos pendientes."
+        )
+        return
+
+    pendientes_por_fecha = {}
+    for sol in solicitudes:
+        fecha = sol.get("fecha_planificada")
+        if fecha:
+            if fecha not in pendientes_por_fecha:
+                pendientes_por_fecha[fecha] = []
+            pendientes_por_fecha[fecha].append(sol)
+
+    hoy = datetime.now().date()
+
+    for fecha_str in sorted(pendientes_por_fecha.keys()):
+
+        message_for_this_date = "<b>PLAZOS CUMPLIDOS DENTRO DEL PLAN DE CONTRATACIONES Y PROYECTOS DE INVERSIÓN</b>\n\n"
+
+        fecha_obj = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+        nombre_dia = get_weekday_in_spanish(fecha_obj)
+        fecha_display = fecha_obj.strftime("%d/%m/%Y")
+
+        message_for_this_date += (
+            f"<b>Fecha Límite: {nombre_dia}, {fecha_display}</b>\n\n"
+        )
+
+        for solicitud in pendientes_por_fecha[fecha_str]:
+            nombre_hito = HITO_NOMBRES_LARGOS.get(
+                solicitud["hito_actual"], solicitud["hito_actual"]
+            )
+            dias_restantes = (fecha_obj - hoy).days
+            estatus_simbolo = "🔴" if dias_restantes < 0 else "🟢"
+
+            message_for_this_date += f"<b>GERENCIA:  </b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
+            message_for_this_date += f"<b>RESPONSABLE DE ENTREGA:  </b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
+            message_for_this_date += f"<b>FASE:  </b> {html.escape(nombre_hito)}\n"
+            message_for_this_date += f"{estatus_simbolo} <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n"
+            message_for_this_date += "----------------------------------------\n\n"
+
+        # Enviar un mensaje por cada día
+        await update.message.reply_text(
+            message_for_this_date, parse_mode=ParseMode.HTML
+        )

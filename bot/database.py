@@ -272,7 +272,6 @@ def get_solicitudes_for_today():
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     hoy_str = datetime.now().strftime("%Y-%m-%d")
-    # CORRECCIÓN: Seleccionar todos los campos necesarios
     cursor.execute("SELECT * FROM solicitudes WHERE hito_actual IS NOT NULL")
     solicitudes_activas = cursor.fetchall()
     solicitudes_de_hoy = []
@@ -313,25 +312,21 @@ def get_delayed_solicitudes(distrito=None, gerencia=None, servicio=None):
     return [dict(row) for row in solicitudes]
 
 
-def solicitud_exists(solicitud_id):
+def solicitud_exists(cursor, solicitud_id):
     """Verifica si una solicitud ya existe en la base de datos."""
-    conn = db_connect()
-    cursor = conn.cursor()
     cursor.execute("SELECT 1 FROM solicitudes WHERE id = ?", (solicitud_id,))
-    exists = cursor.fetchone() is not None
-    conn.close()
-    return exists
+    return cursor.fetchone() is not None
 
 
-def update_solicitud_from_excel(cursor, data):
-    """Actualiza una solicitud existente con datos del Excel."""
+def update_solicitud_info_from_excel(cursor, data):
+    """Actualiza la información descriptiva de una solicitud."""
     cursor.execute(
         """
-        UPDATE solicitudes 
-        SET solicitud_contratacion = ?, servicio = ?, distrito = ?, gerencia = ?, responsable = ?, 
-            etapa_contratacion = ?
+        UPDATE solicitudes SET 
+            solicitud_contratacion = ?, servicio = ?, distrito = ?, gerencia = ?, 
+            responsable = ?, etapa_contratacion = ?
         WHERE id = ?
-        """,
+    """,
         (
             data["solicitud_contratacion"],
             data["servicio"],
@@ -345,12 +340,12 @@ def update_solicitud_from_excel(cursor, data):
 
 
 def insert_solicitud_from_excel(cursor, data):
-    """Inserta una nueva solicitud con datos del Excel."""
+    """Inserta una nueva solicitud con todos sus datos desde el Excel."""
     cursor.execute(
         """
         INSERT INTO solicitudes (
             id, solicitud_contratacion, servicio, distrito, gerencia, responsable,
-            presupuesto_base, fecha_solicitud, etapa_contratacion, hito_actual,
+            etapa_contratacion, hito_actual,
             fecha_planificada_presupuesto_base, fecha_real_presupuesto_base,
             fecha_planificada_fecha_solicitud, fecha_real_fecha_solicitud,
             fecha_planificada_estrategia, fecha_real_estrategia,
@@ -360,7 +355,7 @@ def insert_solicitud_from_excel(cursor, data):
             fecha_planificada_notif_otorgamiento, fecha_real_notif_otorgamiento,
             fecha_planificada_contrato, fecha_real_contrato
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+    """,
         (
             data["id"],
             data["solicitud_contratacion"],
@@ -368,38 +363,35 @@ def insert_solicitud_from_excel(cursor, data):
             data["distrito"],
             data["gerencia"],
             data["responsable"],
-            data["presupuesto_base_original"],
-            data["fecha_solicitud_original"],
             data["etapa_contratacion"],
             data["hito_actual"],
-            data["fecha_planificada_presupuesto_base"],
-            data["fecha_real_presupuesto_base"],
-            data["fecha_planificada_fecha_solicitud"],
-            data["fecha_real_fecha_solicitud"],
-            data["fecha_planificada_estrategia"],
-            data["fecha_real_estrategia"],
-            data["fecha_planificada_inicio"],
-            data["fecha_real_inicio"],
-            data["fecha_planificada_decision"],
-            data["fecha_real_decision"],
-            data["fecha_planificada_acta_otorgamiento"],
-            data["fecha_real_acta_otorgamiento"],
-            data["fecha_planificada_notif_otorgamiento"],
-            data["fecha_real_notif_otorgamiento"],
-            data["fecha_planificada_contrato"],
-            data["fecha_real_contrato"],
+            data.get("fecha_planificada_presupuesto_base"),
+            data.get("fecha_real_presupuesto_base"),
+            data.get("fecha_planificada_fecha_solicitud"),
+            data.get("fecha_real_fecha_solicitud"),
+            data.get("fecha_planificada_estrategia"),
+            data.get("fecha_real_estrategia"),
+            data.get("fecha_planificada_inicio"),
+            data.get("fecha_real_inicio"),
+            data.get("fecha_planificada_decision"),
+            data.get("fecha_real_decision"),
+            data.get("fecha_planificada_acta_otorgamiento"),
+            data.get("fecha_real_acta_otorgamiento"),
+            data.get("fecha_planificada_notif_otorgamiento"),
+            data.get("fecha_real_notif_otorgamiento"),
+            data.get("fecha_planificada_contrato"),
+            data.get("fecha_real_contrato"),
         ),
     )
 
 
-# --- NUEVA FUNCIÓN ---
 def get_solicitudes_unidad_usuaria(distrito=None, gerencia=None, servicio=None):
     """Obtiene las solicitudes donde la gerencia es igual al responsable."""
     conn = db_connect()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
-    query = "SELECT * FROM solicitudes WHERE gerencia = responsable"
+    query = "SELECT * FROM solicitudes WHERE gerencia = responsable AND hito_actual IS NOT NULL"
     params = []
 
     if distrito and distrito != "TODOS":
@@ -415,6 +407,72 @@ def get_solicitudes_unidad_usuaria(distrito=None, gerencia=None, servicio=None):
     query += " ORDER BY id"
 
     cursor.execute(query, params)
+    solicitudes = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in solicitudes]
+
+
+def get_solicitudes_pendientes_por_dia():
+    """Obtiene todas las solicitudes pendientes, ordenadas por su próxima fecha de hito."""
+    conn = db_connect()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    query_parts = []
+    for hito in HITOS_SECUENCIA:
+        query_parts.append(f"WHEN '{hito}' THEN fecha_planificada_{hito}")
+    case_statement = "CASE hito_actual " + " ".join(query_parts) + " END"
+
+    query = f"""
+        SELECT 
+            id, 
+            solicitud_contratacion, 
+            gerencia, 
+            responsable, 
+            hito_actual, 
+            ({case_statement}) as fecha_planificada 
+        FROM solicitudes 
+        WHERE hito_actual IS NOT NULL AND fecha_planificada IS NOT NULL
+        ORDER BY fecha_planificada
+    """
+
+    cursor.execute(query)
+    solicitudes = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in solicitudes]
+
+
+# --- NUEVA FUNCIÓN ---
+def get_solicitudes_unidad_usuaria_pendientes_por_dia():
+    """
+    Obtiene todas las solicitudes pendientes donde la gerencia es el responsable,
+    ordenadas por su próxima fecha de hito.
+    """
+    conn = db_connect()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    query_parts = []
+    for hito in HITOS_SECUENCIA:
+        query_parts.append(f"WHEN '{hito}' THEN fecha_planificada_{hito}")
+    case_statement = "CASE hito_actual " + " ".join(query_parts) + " END"
+
+    query = f"""
+        SELECT
+            id,
+            solicitud_contratacion,
+            gerencia,
+            responsable,
+            hito_actual,
+            ({case_statement}) as fecha_planificada
+        FROM solicitudes
+        WHERE hito_actual IS NOT NULL
+          AND fecha_planificada IS NOT NULL
+          AND gerencia = responsable
+        ORDER BY fecha_planificada
+    """
+
+    cursor.execute(query)
     solicitudes = cursor.fetchall()
     conn.close()
     return [dict(row) for row in solicitudes]
