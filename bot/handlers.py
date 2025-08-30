@@ -1392,7 +1392,7 @@ async def reporte_dia_pendiente_command(
         fecha_display = fecha_obj.strftime("%d/%m/%Y")
 
         message_for_this_date += (
-            f"<b>Fecha Límite: {nombre_dia}, {fecha_display}</b>\n\n"
+            f"<b>FECHA PLANIFICADA: {nombre_dia}, {fecha_display}</b>\n\n"
         )
 
         for solicitud in pendientes_por_fecha[fecha_str]:
@@ -1404,7 +1404,7 @@ async def reporte_dia_pendiente_command(
 
             message_for_this_date += f"<b>GERENCIA:  </b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
             message_for_this_date += f"<b>RESPONSABLE DE ENTREGA:  </b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
-            message_for_this_date += f"<b>FASE:  </b> {html.escape(nombre_hito)}\n"
+            message_for_this_date += f"<b>FASE:  </b> {html.escape(nombre_hito)}\n\n"
             message_for_this_date += f"{estatus_simbolo} <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n"
             message_for_this_date += "----------------------------------------\n\n"
 
@@ -1451,7 +1451,7 @@ async def unidad_usuaria_dia_command(
         fecha_display = fecha_obj.strftime("%d/%m/%Y")
 
         message_for_this_date += (
-            f"<b>Fecha Límite: {nombre_dia}, {fecha_display}</b>\n\n"
+            f"<b>FECHA PLANIFICADA: {nombre_dia}, {fecha_display}</b>\n\n"
         )
 
         for solicitud in pendientes_por_fecha[fecha_str]:
@@ -1463,7 +1463,7 @@ async def unidad_usuaria_dia_command(
 
             message_for_this_date += f"<b>GERENCIA:  </b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
             message_for_this_date += f"<b>RESPONSABLE DE ENTREGA:  </b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
-            message_for_this_date += f"<b>FASE:  </b> {html.escape(nombre_hito)}\n"
+            message_for_this_date += f"<b>FASE:  </b> {html.escape(nombre_hito)}\n\n"
             message_for_this_date += f"{estatus_simbolo} <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n"
             message_for_this_date += "----------------------------------------\n\n"
 
