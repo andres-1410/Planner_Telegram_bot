@@ -8,8 +8,19 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram.ext import Application
 from telegram.constants import ParseMode
 
-from .config import logger, TIMEZONE, HITO_NOMBRES_LARGOS
+from .config import logger, TIMEZONE, HITOS_SECUENCIA, HITO_NOMBRES_LARGOS
 from .database import get_config_value, get_notifiable_users, db_connect
+
+
+def get_tarea_a_cumplir(hito_key):
+    """Determina la tarea a cumplir según el hito actual."""
+    if not hito_key:
+        return "N/A"
+    if hito_key == "presupuesto_base":
+        return "Gerencia responsable recibe presupuesto base."
+    if hito_key == "fecha_solicitud":
+        return "Gerencia responsable entrega a Gerencia de Contrataciones."
+    return "Entrega para firma de Presidencia ENT."
 
 
 async def check_and_send_notifications(context: Application):
@@ -25,25 +36,27 @@ async def check_and_send_notifications(context: Application):
 
     try:
         days_in_advance = int(days_in_advance_str)
-        # La fecha para comparar con la BD se mantiene en formato YYYY-MM-DD
         target_date_db = (datetime.now() + timedelta(days=days_in_advance)).strftime(
             "%Y-%m-%d"
         )
-        # La fecha para mostrar al usuario se formatea a DD/MM/YYYY
-        target_date_display = datetime.strptime(target_date_db, "%Y-%m-%d").strftime(
-            "%d/%m/%Y"
-        )
-
-        logger.info(f"Buscando eventos para la fecha: {target_date_db}")
 
         conn = db_connect()
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        cursor.execute(
-            "SELECT id, solicitud_contratacion, hito_actual FROM solicitudes WHERE hito_actual IS NOT NULL"
-        )
-        solicitudes_activas = cursor.fetchall()
+        # Query optimizada para buscar todas las notificaciones del día
+        query_parts = []
+        for hito in HITOS_SECUENCIA:
+            query_parts.append(f"WHEN '{hito}' THEN fecha_planificada_{hito}")
+        case_statement = "CASE hito_actual " + " ".join(query_parts) + " END"
+
+        query = f"""
+            SELECT id, solicitud_contratacion, hito_actual, responsable 
+            FROM solicitudes 
+            WHERE hito_actual IS NOT NULL AND ({case_statement}) = ?
+        """
+        cursor.execute(query, (target_date_db,))
+        solicitudes_a_notificar = cursor.fetchall()
 
         users_to_notify = get_notifiable_users()
         if not users_to_notify:
@@ -51,46 +64,47 @@ async def check_and_send_notifications(context: Application):
             conn.close()
             return
 
-        for solicitud in solicitudes_activas:
-            hito_actual = solicitud["hito_actual"]
-            fecha_plan_col = f"fecha_planificada_{hito_actual}"
-
-            cursor.execute(
-                f"SELECT {fecha_plan_col} FROM solicitudes WHERE id = ?",
-                (solicitud["id"],),
-            )
-            fecha_plan_result = cursor.fetchone()
-
-            if fecha_plan_result and fecha_plan_result[0] == target_date_db:
-                solicitud_id = solicitud["id"]
-                solicitud_name = solicitud["solicitud_contratacion"]
-                event_name = HITO_NOMBRES_LARGOS.get(hito_actual, hito_actual)
-
-                logger.info(
-                    f"¡Evento encontrado! Solicitud: '{solicitud_name}', Evento: '{event_name}'"
-                )
-
-                solicitud_name_safe = html.escape(solicitud_name)
-                event_name_safe = html.escape(event_name)
-
-                message = (
-                    f"🔔 <b>Alerta de Vencimiento</b> 🔔\n\n"
-                    f"La fecha para el evento <b>{event_name_safe}</b> de la solicitud '<i>{solicitud_name_safe}</i>' está próxima.\n\n"
-                    f"🗓️ <b>Fecha Planificada:</b> {target_date_display}\n"
-                    f"⏳ <b>Anticipación:</b> {days_in_advance} día(s)"
-                )
-                for user_id in users_to_notify:
-                    try:
-                        await context.bot.send_message(
-                            chat_id=user_id, text=message, parse_mode=ParseMode.HTML
-                        )
-                        logger.info(
-                            f"Notificación enviada a {user_id} para el evento '{event_name}' de la solicitud ID {solicitud_id}"
-                        )
-                    except Exception as e:
-                        logger.error(f"No se pudo enviar notificación a {user_id}: {e}")
+        # Agrupar notificaciones por responsable
+        notificaciones_por_responsable = {}
+        for sol in solicitudes_a_notificar:
+            responsable = sol["responsable"] or "Sin Responsable"
+            if responsable not in notificaciones_por_responsable:
+                notificaciones_por_responsable[responsable] = []
+            notificaciones_por_responsable[responsable].append(sol)
 
         conn.close()
+
+        # Enviar mensajes agrupados
+        for responsable, solicitudes in notificaciones_por_responsable.items():
+            target_date_display = datetime.strptime(
+                target_date_db, "%Y-%m-%d"
+            ).strftime("%d/%m/%Y")
+
+            message = "<b>PLAZOS CUMPLIDOS DENTRO DEL PLAN DE CONTRATACIONES Y PROYECTOS DE INVERSIÓN</b>\n"
+            message += f"<b>🗓️ Vencimiento: {target_date_display}</b> 🗓️\n\n"
+            message += "----------------------------------------\n"
+            message += f"<b>Gerencia Responsable:</b> {html.escape(responsable)}\n\n"
+
+            for solicitud in solicitudes:
+                hito_actual = solicitud["hito_actual"]
+                nombre_hito = HITO_NOMBRES_LARGOS.get(hito_actual, hito_actual)
+                tarea = get_tarea_a_cumplir(hito_actual)
+
+                message += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
+                message += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n\n"
+                message += f"<b>Solicitud ID {solicitud['id']}:</b> {html.escape(solicitud['solicitud_contratacion'])}\n\n"
+
+            for user_id in users_to_notify:
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id, text=message, parse_mode=ParseMode.HTML
+                    )
+                    logger.info(
+                        f"Notificación para responsable '{responsable}' enviada a {user_id}."
+                    )
+                except Exception as e:
+                    logger.error(f"No se pudo enviar notificación a {user_id}: {e}")
+
         logger.info("Revisión de notificaciones completada.")
     except Exception as e:
         logger.error(f"Error fatal en el proceso de notificación: {e}")

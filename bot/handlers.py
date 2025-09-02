@@ -34,6 +34,19 @@ UNIDAD_SELECTING_DISTRITO, UNIDAD_SELECTING_GERENCIA, UNIDAD_SELECTING_SERVICIO 
 
 
 # --- Funciones de Utilidad ---
+def get_tarea_a_cumplir(hito_key):
+    """Determina la tarea a cumplir según el hito actual."""
+    if not hito_key:
+        return "N/A"
+    if hito_key == "presupuesto_base":
+        return "Gerencia responsable recibe presupuesto base."
+    if hito_key == "fecha_solicitud":
+        return "Gerencia responsable entrega a Gerencia de Contrataciones."
+
+    # Para todos los demás hitos
+    return "Entrega para firma de Presidencia ENT."
+
+
 def safe_date_convert(date_value):
     if pd.isna(date_value) or date_value == "" or str(date_value).strip() == "-":
         return None
@@ -399,7 +412,10 @@ async def ver_solicitud_command(
     hito_actual_key = solicitud["hito_actual"]
     if hito_actual_key:
         nombre_largo = HITO_NOMBRES_LARGOS.get(hito_actual_key, hito_actual_key)
-        message += f"<b>Etapa:</b> {html.escape(nombre_largo)}\n\n"
+        tarea = get_tarea_a_cumplir(hito_actual_key)
+        message += f"<b>Etapa:</b> {html.escape(nombre_largo)}\n"
+        message += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n\n"
+
     else:
         message += "<b>Estatus General:</b> 🎉 ¡Completado! 🎉\n\n"
 
@@ -645,23 +661,26 @@ async def hoy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     message = "<b>PLAZOS CUMPLIDOS DENTRO DEL PLAN DE CONTRATACIONES Y PROYECTOS DE INVERSIÓN</b>\n"
     message += "<b>🗓️ Vencimiento Hoy</b> 🗓️\n\n"
 
-    # Agrupar por gerencia
-    hoy_por_gerencia = {}
+    # Agrupar por responsable
+    hoy_por_responsable = {}
     for sol in solicitudes:
-        g = sol.get("gerencia", "Sin Gerencia")
-        if g not in hoy_por_gerencia:
-            hoy_por_gerencia[g] = []
-        hoy_por_gerencia[g].append(sol)
+        r = sol.get("responsable", "Sin Responsable")
+        if r not in hoy_por_responsable:
+            hoy_por_responsable[r] = []
+        hoy_por_responsable[r].append(sol)
 
-    for gerencia, solicitudes_gerencia in hoy_por_gerencia.items():
+    for responsable, solicitudes_responsable in hoy_por_responsable.items():
         message += "----------------------------------------\n"
-        message += f"<b>Gerencia:</b> {html.escape(gerencia)}\n\n"
-        for solicitud in solicitudes_gerencia:
+        message += f"<b>Responsable:</b> {html.escape(responsable)}\n\n"
+        for solicitud in solicitudes_responsable:
             hito_actual = solicitud["hito_actual"]
             nombre_hito = HITO_NOMBRES_LARGOS.get(hito_actual, hito_actual)
-            message += f"<b>Responsable:</b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
-            message += f"<b>Solicitud ID {solicitud['id']}:</b> {html.escape(solicitud['solicitud_contratacion'])}\n"
-            message += f"   - <b>Fase pendiente:</b> {html.escape(nombre_hito)}\n\n"
+            tarea = get_tarea_a_cumplir(hito_actual)
+
+            message += f"<b>Gerencia:</b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
+            message += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
+            message += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n\n"
+            message += f"<b>Solicitud ID {solicitud['id']}:</b> {html.escape(solicitud['solicitud_contratacion'])}\n\n"
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
@@ -1006,10 +1025,12 @@ async def servicio_callback_retraso(
             responsable = solicitud.get("responsable", "No especificado")
             fecha_limite = format_date_for_display(solicitud["fecha_planificada"])
             solicitud_nombre = solicitud["solicitud_contratacion"]
+            tarea = get_tarea_a_cumplir(solicitud["hito_actual"])
 
             final_message += f"<b>Responsable:</b> {html.escape(responsable)}\n"
             final_message += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
-            final_message += f"<b>Fecha Límite:</b> {html.escape(fecha_limite)}\n"
+            final_message += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n"
+            final_message += f"<b>Fecha Límite:</b> {html.escape(fecha_limite)}\n\n"
             final_message += f"🔴 <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud_nombre)}\n\n"
 
     chunk_size = 4096
@@ -1135,7 +1156,6 @@ async def servicio_callback_reporte(
         distrito=distrito, gerencia=gerencia_filtro, servicio=servicio
     )
 
-    # Agrupar solicitudes por gerencia
     reporte_por_gerencia = {}
     for sol in solicitudes:
         g = sol.get("gerencia")
@@ -1150,7 +1170,6 @@ async def servicio_callback_reporte(
         )
         return ConversationHandler.END
 
-    # Construir el mensaje final
     final_message = "<b>PLAZOS CUMPLIDOS DENTRO DEL PLAN DE CONTRATACIONES Y PROYECTOS DE INVERSIÓN</b>\n\n"
 
     for gerencia, solicitudes_gerencia in reporte_por_gerencia.items():
@@ -1196,7 +1215,6 @@ reporte_handler = ConversationHandler(
 )
 
 
-# --- NUEVO ConversationHandler para /unidad_usuaria ---
 async def unidad_usuaria_start(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
@@ -1320,20 +1338,19 @@ async def servicio_callback_unidad(
             hoy = datetime.now().date()
             dias_restantes = (fecha_plan_dt - hoy).days
 
-            if dias_restantes < 0:
-                estatus_simbolo = "🔴"
-            else:
-                estatus_simbolo = "🟢"
+            estatus_simbolo = "🔴" if dias_restantes < 0 else "🟢"
+
+            tarea = get_tarea_a_cumplir(hito_actual)
 
             final_message += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
             final_message += (
                 f"<b>Fecha Límite:</b> {format_date_for_display(fecha_plan)}\n"
             )
+            final_message += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n"
             final_message += f"{estatus_simbolo} <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n\n"
         else:
             final_message += f"🎉 <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])} (Completada)\n\n"
 
-    # Enviar en bloques
     chunk_size = 4096
     for i in range(0, len(final_message), chunk_size):
         await query.message.reply_text(
@@ -1355,7 +1372,6 @@ unidad_usuaria_handler = ConversationHandler(
 )
 
 
-# --- NUEVO COMANDO ---
 async def reporte_dia_pendiente_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -1392,7 +1408,7 @@ async def reporte_dia_pendiente_command(
         fecha_display = fecha_obj.strftime("%d/%m/%Y")
 
         message_for_this_date += (
-            f"<b>FECHA PLANIFICADA: {nombre_dia}, {fecha_display}</b>\n\n"
+            f"<b>Fecha Límite: {nombre_dia}, {fecha_display}</b>\n\n"
         )
 
         for solicitud in pendientes_por_fecha[fecha_str]:
@@ -1401,10 +1417,12 @@ async def reporte_dia_pendiente_command(
             )
             dias_restantes = (fecha_obj - hoy).days
             estatus_simbolo = "🔴" if dias_restantes < 0 else "🟢"
+            tarea = get_tarea_a_cumplir(solicitud["hito_actual"])
 
-            message_for_this_date += f"<b>GERENCIA:  </b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
-            message_for_this_date += f"<b>RESPONSABLE DE ENTREGA:  </b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
-            message_for_this_date += f"<b>FASE:  </b> {html.escape(nombre_hito)}\n\n"
+            message_for_this_date += f"<b>Gerencia:</b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
+            message_for_this_date += f"<b>Responsable:</b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
+            message_for_this_date += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
+            message_for_this_date += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n\n"
             message_for_this_date += f"{estatus_simbolo} <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n"
             message_for_this_date += "----------------------------------------\n\n"
 
@@ -1414,7 +1432,6 @@ async def reporte_dia_pendiente_command(
         )
 
 
-# --- NUEVO COMANDO ---
 async def unidad_usuaria_dia_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -1451,7 +1468,7 @@ async def unidad_usuaria_dia_command(
         fecha_display = fecha_obj.strftime("%d/%m/%Y")
 
         message_for_this_date += (
-            f"<b>FECHA PLANIFICADA: {nombre_dia}, {fecha_display}</b>\n\n"
+            f"<b>Fecha Límite: {nombre_dia}, {fecha_display}</b>\n\n"
         )
 
         for solicitud in pendientes_por_fecha[fecha_str]:
@@ -1460,10 +1477,12 @@ async def unidad_usuaria_dia_command(
             )
             dias_restantes = (fecha_obj - hoy).days
             estatus_simbolo = "🔴" if dias_restantes < 0 else "🟢"
+            tarea = get_tarea_a_cumplir(solicitud["hito_actual"])
 
-            message_for_this_date += f"<b>GERENCIA:  </b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
-            message_for_this_date += f"<b>RESPONSABLE DE ENTREGA:  </b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
-            message_for_this_date += f"<b>FASE:  </b> {html.escape(nombre_hito)}\n\n"
+            message_for_this_date += f"<b>Gerencia:</b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
+            message_for_this_date += f"<b>Responsable:</b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
+            message_for_this_date += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
+            message_for_this_date += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n\n"
             message_for_this_date += f"{estatus_simbolo} <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n"
             message_for_this_date += "----------------------------------------\n\n"
 
