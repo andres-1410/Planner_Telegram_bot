@@ -11,7 +11,7 @@ load_dotenv()
 # --- Constantes ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 NOMBRE_ARCHIVO_EXCEL = "CRONOGRAMA DE CONTRATACIÓN.xlsx"
-NOMBRE_ARCHIVO_PRINCIPAL = "CRONOGRAMA PRINCIPAL.xlsx"  # --- NUEVO ARCHIVO ---
+NOMBRE_ARCHIVO_PRINCIPAL = "CRONOGRAMA PRINCIPAL.xlsx"  # "CRONOGRAMA DE CONTRATACIÓN.xlsx"  #   # --- NUEVO ARCHIVO ---
 DB_FILE = "bot_database.db"
 TIMEZONE = "America/Caracas"  # Asegúrate de que esta sea tu zona horaria
 
