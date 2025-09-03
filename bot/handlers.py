@@ -14,8 +14,15 @@ from telegram.ext import (
 )
 from telegram.constants import ParseMode
 
-from .config import logger, NOMBRE_ARCHIVO_EXCEL, HITOS_SECUENCIA, HITO_NOMBRES_LARGOS
+from .config import (
+    logger,
+    NOMBRE_ARCHIVO_EXCEL,
+    NOMBRE_ARCHIVO_PRINCIPAL,
+    HITOS_SECUENCIA,
+    HITO_NOMBRES_LARGOS,
+)
 from .database import *
+from .report_generator import generate_printable_report_html
 
 from .scheduler import check_and_send_notifications
 
@@ -39,12 +46,13 @@ def get_tarea_a_cumplir(hito_key):
     if not hito_key:
         return "N/A"
     if hito_key == "presupuesto_base":
-        return "Gerencia responsable recibe presupuesto base."
+        return "Entrega de presupuesto base."
     if hito_key == "fecha_solicitud":
-        return "Gerencia responsable entrega a Gerencia de Contrataciones."
+        return "Entrega de proceso de inicio a la Gerencia de Contrataciones."
 
     # Para todos los demás hitos
-    return "Entrega para firma de Presidencia ENT."
+    hito = str(HITO_NOMBRES_LARGOS.get(hito_key, "")).lower()
+    return f"Entrega {hito} para firma de Presidencia ENT."
 
 
 def safe_date_convert(date_value):
@@ -190,11 +198,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/unidad_usuaria - Lista solicitudes donde la gerencia es la responsable.\n"
         "/reporte_dia_pendiente - Reporte de solicitudes pendientes por día.\n"
         "/unidad_usuaria_dia - Reporte de Unidades Usuarias por día.\n\n"
+        "<b>Comandos de Administrador (Rol: admin):</b>\n"
+        "/reporte - Genera un reporte consolidado por gerencia.\n"
+        "/reporte_principal - Genera un reporte desde el Cronograma Principal.\n\n"
         "<b>Comandos de Gestión (Rol: contrataciones o admin):</b>\n"
         "/replanificar [ID] [DD/MM/YYYY] - Cambia la fecha del hito actual.\n"
         "/completar [ID] - Marca el hito actual como completado.\n\n"
         "<b>Comandos de Administrador (Rol: admin):</b>\n"
-        "/reporte - Genera un reporte consolidado por gerencia.\n"
         "/cargar_excel - Sincroniza datos descriptivos desde el Excel.\n"
         "/sincerar_datos - Borra y recarga todas las solicitudes desde el Excel.\n"
         "/configurar_dias N - Define los días de antelación.\n"
@@ -679,7 +689,7 @@ async def hoy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
             message += f"<b>Gerencia:</b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
             message += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
-            message += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n\n"
+            message += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n"
             message += f"<b>Solicitud ID {solicitud['id']}:</b> {html.escape(solicitud['solicitud_contratacion'])}\n\n"
 
     await update.message.reply_text(message, parse_mode=ParseMode.HTML)
@@ -1030,7 +1040,7 @@ async def servicio_callback_retraso(
             final_message += f"<b>Responsable:</b> {html.escape(responsable)}\n"
             final_message += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
             final_message += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n"
-            final_message += f"<b>Fecha Límite:</b> {html.escape(fecha_limite)}\n\n"
+            final_message += f"<b>Fecha Límite:</b> {html.escape(fecha_limite)}\n"
             final_message += f"🔴 <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud_nombre)}\n\n"
 
     chunk_size = 4096
@@ -1327,7 +1337,7 @@ async def servicio_callback_unidad(
 
     for solicitud in solicitudes:
         final_message += "----------------------------------------\n"
-        final_message += f"<b>Gerencia:</b> {html.escape(solicitud['gerencia'])}\n\n"
+        final_message += f"<b>Gerencia:</b> {html.escape(solicitud['gerencia'])}\n"
         final_message += f"<b>Responsable:</b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
 
         hito_actual = solicitud.get("hito_actual")
@@ -1422,7 +1432,7 @@ async def reporte_dia_pendiente_command(
             message_for_this_date += f"<b>Gerencia:</b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
             message_for_this_date += f"<b>Responsable:</b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
             message_for_this_date += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
-            message_for_this_date += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n\n"
+            message_for_this_date += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n"
             message_for_this_date += f"{estatus_simbolo} <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n"
             message_for_this_date += "----------------------------------------\n\n"
 
@@ -1482,11 +1492,124 @@ async def unidad_usuaria_dia_command(
             message_for_this_date += f"<b>Gerencia:</b> {html.escape(solicitud.get('gerencia', 'No especificada'))}\n"
             message_for_this_date += f"<b>Responsable:</b> {html.escape(solicitud.get('responsable', 'No especificado'))}\n"
             message_for_this_date += f"<b>Fase:</b> {html.escape(nombre_hito)}\n"
-            message_for_this_date += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n\n"
+            message_for_this_date += f"<b>Tarea a Cumplir:</b> {html.escape(tarea)}\n"
             message_for_this_date += f"{estatus_simbolo} <b>Solicitud (ID {solicitud['id']}):</b> {html.escape(solicitud['solicitud_contratacion'])}\n"
             message_for_this_date += "----------------------------------------\n\n"
 
         # Enviar un mensaje por cada día
         await update.message.reply_text(
             message_for_this_date, parse_mode=ParseMode.HTML
+        )
+
+
+async def reporte_principal_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if get_user_role(update.effective_user.id) != "admin":
+        await update.message.reply_text("No tienes permiso para ejecutar este comando.")
+        return
+
+    file_path = NOMBRE_ARCHIVO_PRINCIPAL
+    if not os.path.exists(file_path):
+        await update.message.reply_text(
+            f"❌ Error: No se encontró el archivo {file_path}."
+        )
+        return
+
+    await update.message.reply_text(
+        f"Archivo {file_path} encontrado. Generando reporte principal..."
+    )
+
+    try:
+        df = pd.read_excel(file_path).fillna("")
+
+        fecha_corte = datetime(2025, 9, 2).date()
+
+        report_data = {}
+
+        for index, row in df.iterrows():
+            gerencia_base = row.get("GERENCIA", "Sin Gerencia")
+            solicitud_id = row.get("N", "N/A")
+            nombre_solicitud = row.get("SOLICITUD DE CONTRATACIÓN", "Sin Nombre")
+
+            for hito_key, hito_col_name in HITO_NOMBRES_LARGOS.items():
+                fecha_str_excel = row.get(hito_col_name)
+                fecha_obj_str = safe_date_convert(fecha_str_excel)
+
+                if fecha_obj_str:
+                    fecha_obj = datetime.strptime(fecha_obj_str, "%Y-%m-%d").date()
+                    if fecha_obj <= fecha_corte:
+                        if hito_key in ["presupuesto_base", "fecha_solicitud"]:
+                            gerencia_resp = gerencia_base
+                        else:
+                            gerencia_resp = "GERENCIA DE CONTRATACIONES"
+
+                        tarea = get_tarea_a_cumplir(hito_key)
+
+                        if fecha_obj_str not in report_data:
+                            report_data[fecha_obj_str] = {}
+
+                        if gerencia_resp not in report_data[fecha_obj_str]:
+                            report_data[fecha_obj_str][gerencia_resp] = []
+
+                        report_data[fecha_obj_str][gerencia_resp].append(
+                            {
+                                "id": solicitud_id,
+                                "nombre_solicitud": nombre_solicitud,
+                                "tarea": tarea,
+                                "nombre_hito": HITO_NOMBRES_LARGOS[hito_key],
+                            }
+                        )
+
+        if not report_data:
+            await update.message.reply_text(
+                "No se encontraron hitos planificados hasta la fecha de corte."
+            )
+            return
+
+        for fecha_str in sorted(report_data.keys()):
+            fecha_obj = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+            nombre_dia = get_weekday_in_spanish(fecha_obj)
+            fecha_display = fecha_obj.strftime("%d/%m/%Y")
+
+            message_for_this_date = "<b>PLAZOS CUMPLIDOS DENTRO DEL PLAN DE CONTRATACIONES Y PROYECTOS DE INVERSIÓN</b>\n\n"
+            message_for_this_date += (
+                f"<b>Fecha de Vencimiento: {nombre_dia}, {fecha_display}</b>\n\n"
+            )
+
+            for gerencia_resp, tareas in report_data[fecha_str].items():
+                message_for_this_date += "----------------------------------------\n"
+                message_for_this_date += (
+                    f"<b>Gerencia Responsable:</b> {html.escape(gerencia_resp)}\n\n"
+                )
+                for tarea_info in tareas:
+                    message_for_this_date += (
+                        f"<b>Fase:</b> {html.escape(tarea_info['nombre_hito'])}\n"
+                    )
+                    message_for_this_date += (
+                        f"<b>Tarea a Cumplir:</b> {html.escape(tarea_info['tarea'])}\n"
+                    )
+                    message_for_this_date += f"<b>Solicitud (ID {tarea_info['id']}):</b> {html.escape(tarea_info['nombre_solicitud'])}\n\n"
+
+            chunk_size = 4096
+            for i in range(0, len(message_for_this_date), chunk_size):
+                await update.message.reply_text(
+                    message_for_this_date[i : i + chunk_size], parse_mode=ParseMode.HTML
+                )
+
+        if generate_printable_report_html(report_data):
+            await update.message.reply_document(
+                document=open("reporte_imprimible.html", "rb"),
+                filename="Reporte_Principal.html",
+                caption="Aquí tienes el reporte completo en formato imprimible.",
+            )
+        else:
+            await update.message.reply_text(
+                "Ocurrió un error al generar el archivo del reporte."
+            )
+
+    except Exception as e:
+        logger.error(f"Error al generar el reporte principal: {e}")
+        await update.message.reply_text(
+            f"❌ Ocurrió un error al generar el reporte principal: {e}"
         )

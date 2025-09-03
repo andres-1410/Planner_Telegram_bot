@@ -21,13 +21,14 @@ from bot.handlers import (
     balance_command,
     hoy_command,
     reporte_dia_pendiente_command,
-    # --- NUEVO COMANDO ---
     unidad_usuaria_dia_command,
     balance_filtro_handler,
     listar_solicitudes_handler,
     retrasado_handler,
     reporte_handler,
     unidad_usuaria_handler,
+    # --- NUEVO COMANDO ---
+    reporte_principal_command,
 )
 from bot.scheduler import post_init
 
@@ -61,9 +62,12 @@ def main() -> None:
     application.add_handler(
         CommandHandler("reporte_dia_pendiente", reporte_dia_pendiente_command)
     )
-    # --- NUEVO COMANDO ---
     application.add_handler(
         CommandHandler("unidad_usuaria_dia", unidad_usuaria_dia_command)
+    )
+    # --- NUEVO COMANDO ---
+    application.add_handler(
+        CommandHandler("reporte_principal", reporte_principal_command)
     )
 
     # Handlers de Conversación

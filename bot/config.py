@@ -11,6 +11,7 @@ load_dotenv()
 # --- Constantes ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 NOMBRE_ARCHIVO_EXCEL = "CRONOGRAMA DE CONTRATACIÓN.xlsx"
+NOMBRE_ARCHIVO_PRINCIPAL = "CRONOGRAMA PRINCIPAL.xlsx"  # --- NUEVO ARCHIVO ---
 DB_FILE = "bot_database.db"
 TIMEZONE = "America/Caracas"  # Asegúrate de que esta sea tu zona horaria
 
@@ -27,18 +28,18 @@ HITOS_SECUENCIA = [
 ]
 
 HITO_NOMBRES_LARGOS = {
-    "presupuesto_base": "Presupuesto Base",
-    "fecha_solicitud": "Fecha de Solicitud",
-    "estrategia": "Estrategia de Contratación",
-    "inicio": "Acta de Inicio - Solicitud A",
-    "decision": "Decisión de Inicio",
-    "acta_otorgamiento": "Acta de Decisión de Otorgamiento",
-    "notif_otorgamiento": "Notificación de Otorgamiento",
-    "contrato": "Contrato",
+    "presupuesto_base": "PRESUPUESTO BASE",
+    "fecha_solicitud": "FECHA DE SOLICITUD",
+    "estrategia": "ESTRATEGIA DE CONTRATACIÓN",
+    "inicio": "ACTA DE INICIO - SOLICITUD A",
+    "decision": "DECISIÓN DE INICIO",
+    "acta_otorgamiento": "ACTA DE DECISIÓN DE OTORGAMIENTO",
+    "notif_otorgamiento": "NOTIFICACIÓN DE OTORGAMIENTO",
+    "contrato": "CONTRATO",
 }
 
 # --- Configuración de Logging ---
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("bot.config")

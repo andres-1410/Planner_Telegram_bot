@@ -391,20 +391,23 @@ def get_solicitudes_unidad_usuaria(distrito=None, gerencia=None, servicio=None):
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
-    query = "SELECT * FROM solicitudes WHERE gerencia = responsable AND hito_actual IS NOT NULL"
+    query = "SELECT * FROM solicitudes WHERE gerencia = responsable"
     params = []
+    conditions = ["gerencia = responsable"]
 
     if distrito and distrito != "TODOS":
-        query += " AND distrito = ?"
+        conditions.append("distrito = ?")
         params.append(distrito)
     if gerencia and gerencia != "TODOS":
-        query += " AND gerencia = ?"
+        conditions.append("gerencia = ?")
         params.append(gerencia)
     if servicio and servicio != "TODOS":
-        query += " AND servicio = ?"
+        conditions.append("servicio = ?")
         params.append(servicio)
 
-    query += " ORDER BY id"
+    query = (
+        "SELECT * FROM solicitudes WHERE " + " AND ".join(conditions) + " ORDER BY id"
+    )
 
     cursor.execute(query, params)
     solicitudes = cursor.fetchall()
@@ -442,7 +445,6 @@ def get_solicitudes_pendientes_por_dia():
     return [dict(row) for row in solicitudes]
 
 
-# --- NUEVA FUNCIÓN ---
 def get_solicitudes_unidad_usuaria_pendientes_por_dia():
     """
     Obtiene todas las solicitudes pendientes donde la gerencia es el responsable,
